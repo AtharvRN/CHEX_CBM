@@ -1,0 +1,49 @@
+{
+  "os": "Linux-5.15.0-141-generic-x86_64-with-glibc2.35",
+  "python": "CPython 3.12.12",
+  "startedAt": "2025-12-03T05:21:44.501436Z",
+  "args": [
+    "--data_dir",
+    "/workspace/CheXpert-v1.0-small",
+    "--limit_samples",
+    "10000",
+    "--epochs",
+    "3",
+    "--use_wandb",
+    "--wandb_project",
+    "chexpert-cbm",
+    "--output",
+    "checkpoints/test_wandb"
+  ],
+  "program": "/workspace/CHEX_CBM/train.py",
+  "codePath": "train.py",
+  "codePathLocal": "train.py",
+  "email": "atharv.ramesh2003@gmail.com",
+  "root": "/workspace/CHEX_CBM",
+  "host": "atharv-pod",
+  "executable": "/opt/conda/envs/atharv/bin/python",
+  "cpu_count": 128,
+  "cpu_count_logical": 256,
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "799769255936",
+      "used": "395230593024"
+    }
+  },
+  "memory": {
+    "total": "1081722974208"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA A100-SXM4-80GB",
+      "memoryTotal": "85899345920",
+      "cudaCores": 6912,
+      "architecture": "Ampere",
+      "uuid": "GPU-fd555fdc-26f3-8d1c-bcdf-fd92510000f3"
+    }
+  ],
+  "cudaVersion": "12.9",
+  "writerId": "y8gpuh6mvw1lt0by7dpfsxp1g4wbv1rh"
+}

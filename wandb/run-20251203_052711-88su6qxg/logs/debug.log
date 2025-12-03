@@ -1,0 +1,24 @@
+2025-12-03 05:27:12,674 INFO    MainThread:26590 [wandb_setup.py:_flush():80] Current SDK version is 0.23.0
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_setup.py:_flush():80] Configure stats pid to 26590
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_setup.py:_flush():80] Loading settings from /root/.config/wandb/settings
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_setup.py:_flush():80] Loading settings from /workspace/CHEX_CBM/wandb/settings
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_setup.py:_flush():80] Loading settings from environment variables
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_init.py:setup_run_log_directory():713] Logging user logs to /workspace/CHEX_CBM/wandb/run-20251203_052711-88su6qxg/logs/debug.log
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_init.py:setup_run_log_directory():714] Logging internal logs to /workspace/CHEX_CBM/wandb/run-20251203_052711-88su6qxg/logs/debug-internal.log
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_init.py:init():840] calling init triggers
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_init.py:init():845] wandb.init called with sweep_config: {}
+config: {'data_dir': '/workspace/CheXpert-v1.0-small', 'competition_labels': True, 'pathology_labels': False, 'uncertain_strategy': 'ones', 'frontal_only': True, 'limit_samples': 10000, 'seed': 42, 'model': 'densenet121', 'pretrained': True, 'dropout': 0.0, 'freeze_backbone': False, 'epochs': 3, 'batch_size': 256, 'lr': 0.0001, 'weight_decay': 1e-05, 'img_size': 224, 'num_workers': 0, 'use_pos_weight': False, 'output': 'checkpoints/test_wandb', 'device': 'cuda', 'use_wandb': True, 'wandb_project': 'chexpert-cbm', 'wandb_entity': None, 'wandb_run_name': None, 'save_plots': True, 'plot_every': 1, 'labels': ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Pleural Effusion'], 'num_classes': 5, 'train_samples': 10000, 'val_samples': 202, 'start_time': '2025-12-03T05:27:10.974779', '_wandb': {}}
+2025-12-03 05:27:12,675 INFO    MainThread:26590 [wandb_init.py:init():888] starting backend
+2025-12-03 05:27:12,981 INFO    MainThread:26590 [wandb_init.py:init():891] sending inform_init request
+2025-12-03 05:27:12,987 INFO    MainThread:26590 [wandb_init.py:init():899] backend started and connected
+2025-12-03 05:27:13,019 INFO    MainThread:26590 [wandb_init.py:init():969] updated telemetry
+2025-12-03 05:27:13,020 INFO    MainThread:26590 [wandb_init.py:init():993] communicating run to backend with 90.0 second timeout
+2025-12-03 05:27:13,779 INFO    MainThread:26590 [wandb_init.py:init():1040] starting run threads in backend
+2025-12-03 05:27:14,013 INFO    MainThread:26590 [wandb_run.py:_console_start():2504] atexit reg
+2025-12-03 05:27:14,013 INFO    MainThread:26590 [wandb_run.py:_redirect():2352] redirect: wrap_raw
+2025-12-03 05:27:14,013 INFO    MainThread:26590 [wandb_run.py:_redirect():2421] Wrapping output streams.
+2025-12-03 05:27:14,013 INFO    MainThread:26590 [wandb_run.py:_redirect():2444] Redirects installed.
+2025-12-03 05:27:14,016 INFO    MainThread:26590 [wandb_init.py:init():1080] run started, returning control to user process
+2025-12-03 05:27:15,806 INFO    MainThread:26590 [wandb_run.py:_config_callback():1385] config_cb None None {'_wandb': {'code_path': 'source-chexpert-cbm-train.py'}}
+2025-12-03 06:00:17,704 INFO    wandb-AsyncioManager-main:26590 [service_client.py:_forward_responses():80] Reached EOF.
+2025-12-03 06:00:17,704 INFO    wandb-AsyncioManager-main:26590 [mailbox.py:close():137] Closing mailbox, abandoning 1 handles.

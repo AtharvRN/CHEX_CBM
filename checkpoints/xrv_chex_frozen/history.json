@@ -1,0 +1,76 @@
+[
+  {
+    "epoch": 1,
+    "train_loss": 0.578921370267868,
+    "val_mean_auroc": 0.7854894770736511,
+    "val_mean_ap": 0.428694933771042,
+    "val_aurocs": {
+      "Enlarged Cardiomediastinum": 0.7814432989690722,
+      "Cardiomegaly": 0.6768048128342246,
+      "Lung Opacity": 0.8807440925087984,
+      "Lung Lesion": 0.7611940298507462,
+      "Edema": 0.771875,
+      "Consolidation": 0.8047794117647059,
+      "Pneumonia": 0.794458762886598,
+      "Atelectasis": 0.8180577427821523,
+      "Pneumothorax": 0.6168498168498169,
+      "Pleural Effusion": 0.8386548913043478,
+      "Pleural Other": 0.8955223880597015,
+      "Fracture": NaN,
+      "mean": 0.7854894770736511
+    },
+    "val_aps": {
+      "Enlarged Cardiomediastinum": 0.7646128833480335,
+      "Cardiomegaly": 0.4710721680256832,
+      "Lung Opacity": 0.8982968935957519,
+      "Lung Lesion": 0.02040816326530612,
+      "Edema": 0.4286192791060984,
+      "Consolidation": 0.404895271147178,
+      "Pneumonia": 0.23509062621965848,
+      "Atelectasis": 0.68931478260222,
+      "Pneumothorax": 0.05292972357953977,
+      "Pleural Effusion": 0.704949935137447,
+      "Pleural Other": 0.045454545454545456,
+      "Fracture": NaN,
+      "mean": 0.428694933771042
+    },
+    "lr": 0.001
+  },
+  {
+    "epoch": 2,
+    "train_loss": 0.4700051519393921,
+    "val_mean_auroc": 0.7991279585891768,
+    "val_mean_ap": 0.44105854089669233,
+    "val_aurocs": {
+      "Enlarged Cardiomediastinum": 0.7839960726558665,
+      "Cardiomegaly": 0.6783645276292335,
+      "Lung Opacity": 0.880844645550528,
+      "Lung Lesion": 0.8109452736318408,
+      "Edema": 0.8020833333333333,
+      "Consolidation": 0.8189338235294118,
+      "Pneumonia": 0.8189432989690721,
+      "Atelectasis": 0.8297112860892388,
+      "Pneumothorax": 0.6146520146520146,
+      "Pleural Effusion": 0.8414855072463767,
+      "Pleural Other": 0.9104477611940298,
+      "Fracture": NaN,
+      "mean": 0.7991279585891768
+    },
+    "val_aps": {
+      "Enlarged Cardiomediastinum": 0.7659854804783245,
+      "Cardiomegaly": 0.46082043856741195,
+      "Lung Opacity": 0.8990815191056891,
+      "Lung Lesion": 0.02564102564102564,
+      "Edema": 0.5043417116870031,
+      "Consolidation": 0.42027891067697504,
+      "Pneumonia": 0.252333150651565,
+      "Atelectasis": 0.7152427227102054,
+      "Pneumothorax": 0.05385337298472401,
+      "Pleural Effusion": 0.7014340384133233,
+      "Pleural Other": 0.05263157894736842,
+      "Fracture": NaN,
+      "mean": 0.44105854089669233
+    },
+    "lr": 0.000505
+  }
+]

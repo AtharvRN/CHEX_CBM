@@ -1,0 +1,1034 @@
+{
+  "Enlarged Cardiomediastinum": {
+    "positive": [
+      [
+        "Obscured hemidiaphragm margin",
+        0.24455706775188446
+      ],
+      [
+        "Lung field whitening zones",
+        0.23083855211734772
+      ],
+      [
+        "Lentiform pleural opacity",
+        0.21339744329452515
+      ],
+      [
+        "Increased mediastinal density",
+        0.17134347558021545
+      ],
+      [
+        "Periosteal reaction near break",
+        0.13801619410514832
+      ],
+      [
+        "Bat-wing perihilar pattern",
+        0.09490906447172165
+      ],
+      [
+        "Increased vascular pedicle width",
+        0.09145011007785797
+      ],
+      [
+        "Segmental airspace opacities",
+        0.09103718400001526
+      ],
+      [
+        "Expansion of paratracheal space",
+        0.08437817543745041
+      ],
+      [
+        "Compression atelectasis appearance",
+        0.08122549951076508
+      ]
+    ],
+    "negative": [
+      [
+        "Absent vascular pattern at periphery",
+        -0.19135960936546326
+      ],
+      [
+        "Hazy lower lung opacities",
+        -0.16373060643672943
+      ],
+      [
+        "Crowding of bronchovascular markings",
+        -0.14408963918685913
+      ],
+      [
+        "Rounded cardiac silhouette margins",
+        -0.1312045007944107
+      ],
+      [
+        "Unilateral uniformly dense hemithorax",
+        -0.11161448806524277
+      ],
+      [
+        "Silhouetted cardiac border",
+        -0.11058589071035385
+      ],
+      [
+        "Patchy alveolar filling",
+        -0.10815319418907166
+      ],
+      [
+        "Segmental airspace filling",
+        -0.1001872643828392
+      ],
+      [
+        "Diffuse pleural surface thickening",
+        -0.09886400401592255
+      ],
+      [
+        "Pleural fluid meniscus curve",
+        -0.09782758355140686
+      ]
+    ]
+  },
+  "Cardiomegaly": {
+    "positive": [
+      [
+        "Wide transverse cardiac diameter",
+        0.33542922139167786
+      ],
+      [
+        "Lobar homogeneous opacity",
+        0.32234930992126465
+      ],
+      [
+        "Diffuse hazy lung densities",
+        0.3212875425815582
+      ],
+      [
+        "Prominent aortic knob",
+        0.2513526678085327
+      ],
+      [
+        "Segmental airspace opacities",
+        0.24499070644378662
+      ],
+      [
+        "Rib callus formation",
+        0.18182340264320374
+      ],
+      [
+        "Fissure displacement toward collapse",
+        0.17815595865249634
+      ],
+      [
+        "Engorged pulmonary vasculature",
+        0.1719280332326889
+      ],
+      [
+        "Patchy ground-glass areas",
+        0.16719067096710205
+      ],
+      [
+        "Increased retrocardiac density",
+        0.15644194185733795
+      ]
+    ],
+    "negative": [
+      [
+        "Compensatory hyperinflation opposite lung",
+        -0.297688752412796
+      ],
+      [
+        "Non-aerated nodular density",
+        -0.2755454480648041
+      ],
+      [
+        "Mass effect on fissure position",
+        -0.24970871210098267
+      ],
+      [
+        "Angulated rib segment",
+        -0.24185384809970856
+      ],
+      [
+        "Reticular interstitial pattern",
+        -0.18895064294338226
+      ],
+      [
+        "Air bronchogram pattern",
+        -0.18887263536453247
+      ],
+      [
+        "Pleural-based linear opacities",
+        -0.1768113076686859
+      ],
+      [
+        "Symmetric bilateral opacities",
+        -0.16703349351882935
+      ],
+      [
+        "Loss of aeration in lobe",
+        -0.14182402193546295
+      ],
+      [
+        "Faint pleural reflection line",
+        -0.14015324413776398
+      ]
+    ]
+  },
+  "Lung Opacity": {
+    "positive": [
+      [
+        "Loss of mediastinal tapering",
+        0.4722997546195984
+      ],
+      [
+        "Increased mediastinal density",
+        0.3618885576725006
+      ],
+      [
+        "Obscured hemidiaphragm margin",
+        0.26220712065696716
+      ],
+      [
+        "Non-uniform parenchymal haziness",
+        0.23721258342266083
+      ],
+      [
+        "Homogeneous hemithorax opacity",
+        0.2270892709493637
+      ],
+      [
+        "Apical pleural capping",
+        0.20391319692134857
+      ],
+      [
+        "Fluid layering in lateral decubitus",
+        0.18522870540618896
+      ],
+      [
+        "Confluent parenchymal whitening",
+        0.1519213318824768
+      ],
+      [
+        "Lentiform pleural opacity",
+        0.14860562980175018
+      ],
+      [
+        "Heterogeneous opacified parenchyma",
+        0.12374810874462128
+      ]
+    ],
+    "negative": [
+      [
+        "Globular enlarged cardiac silhouette",
+        -0.25203391909599304
+      ],
+      [
+        "Rounded cardiac silhouette margins",
+        -0.24486029148101807
+      ],
+      [
+        "Focal lateral pleural bulge",
+        -0.23393909633159637
+      ],
+      [
+        "Ill-defined parenchymal infiltrates",
+        -0.21700678765773773
+      ],
+      [
+        "Bat-wing perihilar pattern",
+        -0.1713472604751587
+      ],
+      [
+        "Undefined patchy lung whitening",
+        -0.16890321671962738
+      ],
+      [
+        "Meniscus sign along chest wall",
+        -0.16491781175136566
+      ],
+      [
+        "Bulging right atrial contour",
+        -0.1601404845714569
+      ],
+      [
+        "Angulated rib segment",
+        -0.15705996751785278
+      ],
+      [
+        "Air lucency without vessels",
+        -0.1378352791070938
+      ]
+    ]
+  },
+  "Lung Lesion": {
+    "positive": [
+      [
+        "Wide upper cardiac-mediastinal segment",
+        0.2590527832508087
+      ],
+      [
+        "Segmental bandlike density",
+        0.2032521665096283
+      ],
+      [
+        "Lobar consolidative whitening",
+        0.19340331852436066
+      ],
+      [
+        "Thickened mediastinal silhouette",
+        0.1755571812391281
+      ],
+      [
+        "Central alveolar clouding",
+        0.17214760184288025
+      ],
+      [
+        "Fissure displacement toward collapse",
+        0.1699247658252716
+      ],
+      [
+        "Kerley B lines",
+        0.15378673374652863
+      ],
+      [
+        "Apical pleural capping",
+        0.13923567533493042
+      ],
+      [
+        "Localized rib irregularity",
+        0.12290476262569427
+      ],
+      [
+        "Plate-like linear opacities",
+        0.1028243824839592
+      ]
+    ],
+    "negative": [
+      [
+        "Wide transverse cardiac diameter",
+        -0.28433290123939514
+      ],
+      [
+        "Blunted costophrenic angle",
+        -0.24533094465732574
+      ],
+      [
+        "Mediastinal shift toward affected side",
+        -0.22430385649204254
+      ],
+      [
+        "Bulging right atrial contour",
+        -0.21464821696281433
+      ],
+      [
+        "Symmetric bilateral opacities",
+        -0.1860606074333191
+      ],
+      [
+        "Prominent aortic knob",
+        -0.16386336088180542
+      ],
+      [
+        "Upturned cardiac apex",
+        -0.15379874408245087
+      ],
+      [
+        "Increased cardiothoracic ratio",
+        -0.10345421731472015
+      ],
+      [
+        "Mixed interstitial-alveolar patterns",
+        -0.07624036073684692
+      ],
+      [
+        "Increased vascular pedicle width",
+        -0.06822242587804794
+      ]
+    ]
+  },
+  "Edema": {
+    "positive": [
+      [
+        "Prominent left ventricular border",
+        0.481380820274353
+      ],
+      [
+        "Compressed lung apex shadow",
+        0.32290154695510864
+      ],
+      [
+        "Silhouetting of diaphragm",
+        0.28687116503715515
+      ],
+      [
+        "Mixed interstitial-alveolar patterns",
+        0.256581574678421
+      ],
+      [
+        "Engorged pulmonary vasculature",
+        0.24077735841274261
+      ],
+      [
+        "Lung field whitening zones",
+        0.21968965232372284
+      ],
+      [
+        "Lobulated lung mass border",
+        0.2157754898071289
+      ],
+      [
+        "Reticular interstitial pattern",
+        0.20992763340473175
+      ],
+      [
+        "Increased retrocardiac density",
+        0.20685610175132751
+      ],
+      [
+        "Overriding rib edges",
+        0.17884911596775055
+      ]
+    ],
+    "negative": [
+      [
+        "Segmented rib contour",
+        -0.4595682919025421
+      ],
+      [
+        "Apparent lung volume reduction",
+        -0.33184847235679626
+      ],
+      [
+        "Rounded cardiac silhouette margins",
+        -0.2994963824748993
+      ],
+      [
+        "Pleural thickening bands",
+        -0.24811066687107086
+      ],
+      [
+        "Obscured aortic arch borders",
+        -0.23772571980953217
+      ],
+      [
+        "Thickened mediastinal silhouette",
+        -0.23366540670394897
+      ],
+      [
+        "Fissure displacement toward collapse",
+        -0.228180930018425
+      ],
+      [
+        "Non-aerated nodular density",
+        -0.22532212734222412
+      ],
+      [
+        "Compensatory hyperinflation opposite lung",
+        -0.21612980961799622
+      ],
+      [
+        "Crowded ribs on affected side",
+        -0.20321716368198395
+      ]
+    ]
+  },
+  "Consolidation": {
+    "positive": [
+      [
+        "Increased mediastinal density",
+        0.17549999058246613
+      ],
+      [
+        "Unilateral uniformly dense hemithorax",
+        0.14277811348438263
+      ],
+      [
+        "Mixed interstitial-alveolar patterns",
+        0.1351742148399353
+      ],
+      [
+        "Volume loss with hilar shift",
+        0.1254865676164627
+      ],
+      [
+        "Loss of aeration in lobe",
+        0.11266319453716278
+      ],
+      [
+        "Apical pleural capping",
+        0.10141727328300476
+      ],
+      [
+        "Rib callus formation",
+        0.09812754392623901
+      ],
+      [
+        "Pleural-based focal opacity",
+        0.09442967176437378
+      ],
+      [
+        "Homogeneous hemithorax opacity",
+        0.09045151621103287
+      ],
+      [
+        "Peribronchial cuffing",
+        0.08436387777328491
+      ]
+    ],
+    "negative": [
+      [
+        "Kerley B lines",
+        -0.20239339768886566
+      ],
+      [
+        "Increased convexity of left heart",
+        -0.18529129028320312
+      ],
+      [
+        "Spiculated lesion margins",
+        -0.17293475568294525
+      ],
+      [
+        "Bat-wing perihilar pattern",
+        -0.1667117476463318
+      ],
+      [
+        "Overriding rib edges",
+        -0.14243115484714508
+      ],
+      [
+        "Undefined patchy lung whitening",
+        -0.11897429078817368
+      ],
+      [
+        "Central alveolar clouding",
+        -0.10299549251794815
+      ],
+      [
+        "Angulated rib segment",
+        -0.09124170988798141
+      ],
+      [
+        "Lobulated lung mass border",
+        -0.08675695210695267
+      ],
+      [
+        "Convex lateral mediastinal borders",
+        -0.08246341347694397
+      ]
+    ]
+  },
+  "Pneumonia": {
+    "positive": [
+      [
+        "Peripheral radiolucent crescent",
+        0.22414495050907135
+      ],
+      [
+        "Central alveolar clouding",
+        0.22072656452655792
+      ],
+      [
+        "Heterogeneous opacified parenchyma",
+        0.16751974821090698
+      ],
+      [
+        "Heterogeneous mass opacity",
+        0.16318930685520172
+      ],
+      [
+        "Homogeneous hemithorax opacity",
+        0.1605450063943863
+      ],
+      [
+        "Lobulated lung mass border",
+        0.14773592352867126
+      ],
+      [
+        "Apical pleural capping",
+        0.13582760095596313
+      ],
+      [
+        "Mixed interstitial-alveolar patterns",
+        0.13447755575180054
+      ],
+      [
+        "Non-aerated nodular density",
+        0.12661565840244293
+      ],
+      [
+        "Obscured heart border",
+        0.11143793910741806
+      ]
+    ],
+    "negative": [
+      [
+        "Irregular pleural rind",
+        -0.2807045578956604
+      ],
+      [
+        "Expanded right ventricular outflow",
+        -0.26521575450897217
+      ],
+      [
+        "Mediastinal shift toward affected side",
+        -0.20044933259487152
+      ],
+      [
+        "Concave superior fluid margin",
+        -0.19668306410312653
+      ],
+      [
+        "Mass effect on fissure position",
+        -0.17487730085849762
+      ],
+      [
+        "Discontinuity of rib cortex",
+        -0.15201450884342194
+      ],
+      [
+        "Basal parenchymal consolidation",
+        -0.1434449702501297
+      ],
+      [
+        "Broad cardiomediastinal shadow",
+        -0.13452760875225067
+      ],
+      [
+        "Bulging right atrial contour",
+        -0.12140464782714844
+      ],
+      [
+        "Fissure displacement toward collapse",
+        -0.11344122886657715
+      ]
+    ]
+  },
+  "Atelectasis": {
+    "positive": [
+      [
+        "Expansion of paratracheal space",
+        0.3151410222053528
+      ],
+      [
+        "Unilateral uniformly dense hemithorax",
+        0.2818509638309479
+      ],
+      [
+        "Cardiogenic vascular congestion",
+        0.24381393194198608
+      ],
+      [
+        "Pleural-based focal opacity",
+        0.2377205789089203
+      ],
+      [
+        "Loss of mediastinal tapering",
+        0.21516016125679016
+      ],
+      [
+        "Cavitary mass formation",
+        0.19223876297473907
+      ],
+      [
+        "Increased retrocardiac density",
+        0.15901008248329163
+      ],
+      [
+        "Poorly marginated parenchymal density",
+        0.15881545841693878
+      ],
+      [
+        "Loss of aeration in lobe",
+        0.12516357004642487
+      ],
+      [
+        "Split pleura sign",
+        0.11775548756122589
+      ]
+    ],
+    "negative": [
+      [
+        "Fluid tracking along fissures",
+        -0.29469355940818787
+      ],
+      [
+        "Absent peripheral lung markings",
+        -0.2876070737838745
+      ],
+      [
+        "Mediastinal shift from mass effect",
+        -0.2637096345424652
+      ],
+      [
+        "Wide upper cardiac-mediastinal segment",
+        -0.2631551921367645
+      ],
+      [
+        "Unilateral alveolar infiltration",
+        -0.2589430510997772
+      ],
+      [
+        "Ill-defined alveolar haziness",
+        -0.1993747502565384
+      ],
+      [
+        "Rounded cardiac silhouette margins",
+        -0.16446493566036224
+      ],
+      [
+        "Interlobular septal lines",
+        -0.15447011590003967
+      ],
+      [
+        "Confluent parenchymal whitening",
+        -0.14061352610588074
+      ],
+      [
+        "Silhouetting of adjacent cardiac border",
+        -0.135490283370018
+      ]
+    ]
+  },
+  "Pneumothorax": {
+    "positive": [
+      [
+        "Wedge-shaped peripheral opacity",
+        0.4137343466281891
+      ],
+      [
+        "Compensatory hyperinflation opposite lung",
+        0.39946407079696655
+      ],
+      [
+        "Mediastinal shift toward affected side",
+        0.37078818678855896
+      ],
+      [
+        "Basal parenchymal consolidation",
+        0.3616476356983185
+      ],
+      [
+        "Sharp visceral pleural edge",
+        0.3546462953090668
+      ],
+      [
+        "Angulated rib segment",
+        0.30092576146125793
+      ],
+      [
+        "Peripheral ill-defined opacities",
+        0.26591935753822327
+      ],
+      [
+        "Loculated pleural collection",
+        0.26100146770477295
+      ],
+      [
+        "Apparent lung volume reduction",
+        0.24125665426254272
+      ],
+      [
+        "Asymmetric rib alignment",
+        0.20876918733119965
+      ]
+    ],
+    "negative": [
+      [
+        "Heterogeneous opacified parenchyma",
+        -0.41238951683044434
+      ],
+      [
+        "Mediastinal shift from mass effect",
+        -0.39373087882995605
+      ],
+      [
+        "Absent vascular pattern at periphery",
+        -0.33796268701553345
+      ],
+      [
+        "Blunted cortical margins",
+        -0.28841641545295715
+      ],
+      [
+        "Increased mediastinal density",
+        -0.2876594364643097
+      ],
+      [
+        "Collapsed lung retraction",
+        -0.2637639045715332
+      ],
+      [
+        "Fluffy parenchymal infiltrates",
+        -0.2433541864156723
+      ],
+      [
+        "Diffuse interstitial thickening",
+        -0.22330330312252045
+      ],
+      [
+        "Globular enlarged cardiac silhouette",
+        -0.22059272229671478
+      ],
+      [
+        "Sharp cortical step-off",
+        -0.210321307182312
+      ]
+    ]
+  },
+  "Pleural Effusion": {
+    "positive": [
+      [
+        "Blunted costophrenic angle",
+        0.43824321031570435
+      ],
+      [
+        "Plate-like linear opacities",
+        0.42846980690956116
+      ],
+      [
+        "Irregular pleural rind",
+        0.3523716628551483
+      ],
+      [
+        "Lung field whitening zones",
+        0.3160346448421478
+      ],
+      [
+        "Mediastinal shift from mass effect",
+        0.2937578856945038
+      ],
+      [
+        "Prominent aortic knob",
+        0.28977546095848083
+      ],
+      [
+        "Apical pleural capping",
+        0.26120129227638245
+      ],
+      [
+        "Nodular pleural contouring",
+        0.24700447916984558
+      ],
+      [
+        "Straightened pleural line",
+        0.24308329820632935
+      ],
+      [
+        "Fluid layering in lateral decubitus",
+        0.22568295896053314
+      ]
+    ],
+    "negative": [
+      [
+        "Bat-wing perihilar pattern",
+        -0.4291629493236542
+      ],
+      [
+        "Peripheral coin-shaped lesion",
+        -0.4143814146518707
+      ],
+      [
+        "Prominent left ventricular border",
+        -0.37590208649635315
+      ],
+      [
+        "Hazy lower lung opacities",
+        -0.3201747536659241
+      ],
+      [
+        "Mass effect on fissure position",
+        -0.27299246191978455
+      ],
+      [
+        "Retrocardiac triangular opacity",
+        -0.26288577914237976
+      ],
+      [
+        "Parietal pleura irregularity",
+        -0.26031720638275146
+      ],
+      [
+        "Engorged pulmonary vasculature",
+        -0.2552371323108673
+      ],
+      [
+        "Periosteal reaction near break",
+        -0.25467127561569214
+      ],
+      [
+        "Air lucency around mass",
+        -0.2186649739742279
+      ]
+    ]
+  },
+  "Pleural Other": {
+    "positive": [
+      [
+        "Fluid tracking along fissures",
+        0.2943037152290344
+      ],
+      [
+        "Increased convexity of left heart",
+        0.20536299049854279
+      ],
+      [
+        "Mass distorting adjacent vessels",
+        0.19929924607276917
+      ],
+      [
+        "Confluent alveolar densities",
+        0.1714547872543335
+      ],
+      [
+        "Cavitary mass formation",
+        0.1679990291595459
+      ],
+      [
+        "Segmental airspace opacities",
+        0.15330302715301514
+      ],
+      [
+        "Undefined patchy lung whitening",
+        0.09629274904727936
+      ],
+      [
+        "Lentiform pleural opacity",
+        0.08953192085027695
+      ],
+      [
+        "Calcified pleural plaques",
+        0.07607051730155945
+      ],
+      [
+        "Segmental airspace filling",
+        0.05090105161070824
+      ]
+    ],
+    "negative": [
+      [
+        "Symmetric bilateral opacities",
+        -0.3063758909702301
+      ],
+      [
+        "Increased cardiothoracic ratio",
+        -0.2757323384284973
+      ],
+      [
+        "Fluid layering in lateral decubitus",
+        -0.2298286259174347
+      ],
+      [
+        "Non-aligned fracture fragment",
+        -0.2196698635816574
+      ],
+      [
+        "Air lucency around mass",
+        -0.2053777128458023
+      ],
+      [
+        "Double right heart border",
+        -0.17245572805404663
+      ],
+      [
+        "Absent vascular pattern at periphery",
+        -0.10337352752685547
+      ],
+      [
+        "Increased parenchymal whiteness",
+        -0.08489947766065598
+      ],
+      [
+        "Spacer gap between lung and chest wall",
+        -0.08172701299190521
+      ],
+      [
+        "Linear lucency in bone",
+        -0.02109966240823269
+      ]
+    ]
+  },
+  "Fracture": {
+    "positive": [
+      [
+        "Wedge-shaped peripheral opacity",
+        0.3434354066848755
+      ],
+      [
+        "Non-aligned fracture fragment",
+        0.1727692037820816
+      ],
+      [
+        "Peribronchial cuffing",
+        0.17009568214416504
+      ],
+      [
+        "Buckled rib cortex",
+        0.1680760681629181
+      ],
+      [
+        "Lobulated lung mass border",
+        0.165114164352417
+      ],
+      [
+        "Expansion of paratracheal space",
+        0.1558224856853485
+      ],
+      [
+        "Reticular interstitial pattern",
+        0.14997151494026184
+      ],
+      [
+        "Broad retrosternal opacity",
+        0.1412300318479538
+      ],
+      [
+        "Cavitary mass formation",
+        0.12126640975475311
+      ],
+      [
+        "Undefined patchy lung whitening",
+        0.11402261257171631
+      ]
+    ],
+    "negative": [
+      [
+        "Air lucency without vessels",
+        -0.3207547664642334
+      ],
+      [
+        "Blunted costophrenic angle",
+        -0.29322701692581177
+      ],
+      [
+        "Confluent alveolar densities",
+        -0.2332143485546112
+      ],
+      [
+        "Volume loss with hilar shift",
+        -0.2210168093442917
+      ],
+      [
+        "Straightened left heart border",
+        -0.20306488871574402
+      ],
+      [
+        "Prominent vascular mediastinal shadows",
+        -0.16437244415283203
+      ],
+      [
+        "Absent vascular pattern at periphery",
+        -0.15914033353328705
+      ],
+      [
+        "Lung field whitening zones",
+        -0.11834101378917694
+      ],
+      [
+        "Thickened mediastinal silhouette",
+        -0.09420798718929291
+      ],
+      [
+        "Increased mediastinal density",
+        -0.09375277906656265
+      ]
+    ]
+  }
+}

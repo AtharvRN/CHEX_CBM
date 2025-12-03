@@ -1,0 +1,12 @@
+{"time":"2025-12-03T05:21:46.755198403Z","level":"INFO","msg":"main: starting server","port-filename":"/tmp/tmpc42603jn/port-24641.txt","pid":24641,"log-level":0,"disable-analytics":false,"shutdown-on-parent-exit":false,"enable-dcgm-profiling":false}
+{"time":"2025-12-03T05:21:46.755883148Z","level":"INFO","msg":"server: will exit if parent process dies","ppid":24641}
+{"time":"2025-12-03T05:21:46.755848001Z","level":"INFO","msg":"server: accepting connections","addr":{"Name":"/tmp/wandb-24641-24773-1722997527/socket","Net":"unix"}}
+{"time":"2025-12-03T05:21:46.832824675Z","level":"INFO","msg":"connection: ManageConnectionData: new connection created","id":"1(@)"}
+{"time":"2025-12-03T05:21:46.84101945Z","level":"INFO","msg":"handleInformInit: received","streamId":"d0u4795n","id":"1(@)"}
+{"time":"2025-12-03T05:21:47.275738767Z","level":"INFO","msg":"handleInformInit: stream started","streamId":"d0u4795n","id":"1(@)"}
+{"time":"2025-12-03T05:22:23.586180978Z","level":"INFO","msg":"handleInformTeardown: server teardown initiated","id":"1(@)"}
+{"time":"2025-12-03T05:22:23.586293501Z","level":"INFO","msg":"server is shutting down"}
+{"time":"2025-12-03T05:22:23.586381578Z","level":"INFO","msg":"connection: closing","id":"1(@)"}
+{"time":"2025-12-03T05:22:23.586393831Z","level":"INFO","msg":"server: listener closed","addr":{"Name":"/tmp/wandb-24641-24773-1722997527/socket","Net":"unix"}}
+{"time":"2025-12-03T05:22:23.586452301Z","level":"INFO","msg":"connection: closed successfully","id":"1(@)"}
+{"time":"2025-12-03T05:22:24.16144583Z","level":"INFO","msg":"server: parent process exited, terminating service process"}

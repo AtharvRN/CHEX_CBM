@@ -1,0 +1,527 @@
+# =============================================================================
+# CHEX_CBM Training Commands
+# =============================================================================
+# Activate conda environment first:
+#   source /opt/conda/etc/profile.d/conda.sh && conda activate atharv
+# =============================================================================
+
+# =============================================================================
+# PART 1: TORCHXRAYVISION PRETRAINED MODELS (RECOMMENDED - Fast!)
+# =============================================================================
+# XRV models are pretrained on chest X-ray datasets - much faster than ImageNet!
+# Available: xrv-all, xrv-chex, xrv-nih, xrv-mimic-nb, xrv-mimic-ch, xrv-rsna, xrv-pc
+
+# -----------------------------------------------------------------------------
+# XRV-ALL: Use pretrained head directly (NO TRAINING NEEDED!)
+# Just evaluate XRV's pretrained classifier on CheXpert validation set
+# This is instant - just maps XRV's 18 outputs to our 12 classes
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --model xrv-all \
+    --pathology_labels \
+    --use_xrv_head \
+    --epochs 0 \
+    --output checkpoints/xrv_all_pretrained
+
+# -----------------------------------------------------------------------------
+# XRV-ALL: Fine-tune new classifier head (backbone frozen)
+# Fast! Only trains the final linear layer
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --model xrv-all \
+    --pathology_labels \
+    --freeze_backbone \
+    --epochs 5 \
+    --batch_size 64 \
+    --lr 1e-3 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/xrv_all_frozen
+
+# -----------------------------------------------------------------------------
+# XRV-CHEX: CheXpert-specific pretrained (frozen backbone)
+# Best for CheXpert since it was trained on CheXpert!
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --model xrv-chex \
+    --pathology_labels \
+    --freeze_backbone \
+    --epochs 5 \
+    --batch_size 64 \
+    --lr 1e-3 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/xrv_chex_frozen
+
+# -----------------------------------------------------------------------------
+# XRV-ALL: Full fine-tuning (slower but best results)
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --model xrv-all \
+    --pathology_labels \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/xrv_all_finetune
+
+# =============================================================================
+# PART 2: STANDARD IMAGENET PRETRAINED (Slower - need full training)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# QUICK TEST (10K samples, 3 epochs) - For debugging/testing
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --epochs 3 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --limit_samples 10000 \
+    --seed 42 \
+    --output checkpoints/test_10k
+
+# -----------------------------------------------------------------------------
+# FULL TRAINING - All 14 labels, DenseNet-121
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --model densenet121 \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/densenet121_full
+
+# -----------------------------------------------------------------------------
+# COMPETITION LABELS ONLY (5 classes) - Atelectasis, Cardiomegaly, Consolidation, Edema, Pleural Effusion
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --competition_labels \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/competition_5class
+
+# -----------------------------------------------------------------------------
+# PATHOLOGY LABELS ONLY (12 classes) - Excludes "No Finding" and "Support Devices"
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --pathology_labels \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/pathology_12class
+
+# -----------------------------------------------------------------------------
+# U-ZEROS STRATEGY (uncertain labels -> 0)
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --uncertain_strategy zeros \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/uzeros_exp
+
+# -----------------------------------------------------------------------------
+# RESNET-50 BACKBONE
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --model resnet50 \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/resnet50_full
+
+# -----------------------------------------------------------------------------
+# FREEZE BACKBONE (only train classifier head)
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --freeze_backbone \
+    --epochs 5 \
+    --batch_size 64 \
+    --lr 1e-3 \
+    --seed 42 \
+    --output checkpoints/frozen_backbone
+
+# -----------------------------------------------------------------------------
+# WITH DROPOUT
+# -----------------------------------------------------------------------------
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --dropout 0.5 \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --seed 42 \
+    --output checkpoints/dropout_0.5
+
+# =============================================================================
+# PART 2: EVALUATION COMMANDS
+# =============================================================================
+
+# Evaluate best model
+python evaluate.py \
+    --checkpoint checkpoints/test_10k/best_model.pth \
+    --data_dir /workspace/CheXpert-v1.0-small
+
+# Evaluate with plots and saved predictions
+python evaluate.py \
+    --checkpoint checkpoints/densenet121_full/best_model.pth \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --plot_curves \
+    --save_predictions
+
+# =============================================================================
+# PART 3: WANDB LOGGING EXAMPLES
+# =============================================================================
+
+# Quick test with wandb
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --limit_samples 10000 \
+    --epochs 3 \
+    --use_wandb \
+    --wandb_project chexpert-cbm \
+    --output checkpoints/test_wandb
+
+# Full training with wandb
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --epochs 10 \
+    --batch_size 32 \
+    --lr 1e-4 \
+    --use_pos_weight \
+    --use_wandb \
+    --wandb_project chexpert-cbm \
+    --wandb_run_name densenet121_full \
+    --output checkpoints/densenet121_wandb
+
+# Competition labels + wandb
+python train.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --competition_labels \
+    --epochs 15 \
+    --use_pos_weight \
+    --use_wandb \
+    --wandb_project chexpert-cbm \
+    --output checkpoints/comp_wandb
+
+# =============================================================================
+# PART 4: LABEL-FREE CBM (Oikarinen et al., 2023)
+# =============================================================================
+# Paper: https://arxiv.org/abs/2304.06129
+# Uses CLIP embeddings to create concept bottleneck without annotations
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# LABEL-FREE CBM - Quick test (10K samples)
+# -----------------------------------------------------------------------------
+python label_free_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --concept_file concepts/chexpert_concepts.txt \
+    --backbone densenet121 \
+    --clip_name biomedclip \
+    --limit_samples 10000 \
+    --batch_size 64 \
+    --clip_cutoff 0.28 \
+    --interpretability_cutoff 0.1 \
+    --lam 0.0002 \
+    --n_iters 2000 \
+    --seed 42 \
+    --output saved_models/lf_cbm_10k
+
+# -----------------------------------------------------------------------------
+# LABEL-FREE CBM - Full training
+# -----------------------------------------------------------------------------
+python label_free_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --concept_file concepts/chexpert_concepts.txt \
+    --backbone densenet121 \
+    --clip_name biomedclip \
+    --batch_size 64 \
+    --clip_cutoff 0.28 \
+    --interpretability_cutoff 0.1 \
+    --lam 0.0002 \
+    --n_iters 2000 \
+    --seed 42 \
+    --output saved_models/lf_cbm_full
+
+# -----------------------------------------------------------------------------
+# LABEL-FREE CBM - ResNet-50 backbone
+# -----------------------------------------------------------------------------
+python label_free_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --concept_file concepts/chexpert_concepts.txt \
+    --backbone resnet50 \
+    --clip_name biomedclip \
+    --limit_samples 10000 \
+    --batch_size 64 \
+    --seed 42 \
+    --output saved_models/lf_cbm_resnet_10k
+
+# -----------------------------------------------------------------------------
+# LABEL-FREE CBM - Evaluation only
+# -----------------------------------------------------------------------------
+python label_free_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --concept_file concepts/chexpert_concepts.txt \
+    --backbone densenet121 \
+    --clip_name biomedclip \
+    --output saved_models/lf_cbm_10k \
+    --eval_only
+
+# =============================================================================
+# PART 5: VLG-CBM (Srivastava et al., 2024)
+# =============================================================================
+# Paper: https://arxiv.org/abs/2408.01432
+# Uses ChEX grounding model to generate concept pseudo-annotations
+# Then trains Concept Bottleneck Layer (CBL) on those annotations
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# STEP 1: Generate ChEX annotations for training set
+# -----------------------------------------------------------------------------
+python generate_annotations.py \
+    --concepts concepts/chexpert_concepts.json \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --chex_ckpt /workspace/chex_models/chex_stage3/checkpoints/last.ckpt \
+    --chex_config /workspace/chex/conf/chex_stage3.yaml \
+    --output_dir annotations/train \
+    --split train \
+    --threshold 0.3 \
+    --max_images 10000 \
+    --batch_size 1
+
+# -----------------------------------------------------------------------------
+# STEP 2: Generate ChEX annotations for validation set
+# -----------------------------------------------------------------------------
+python generate_annotations.py \
+    --concepts concepts/chexpert_concepts.json \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --chex_ckpt /workspace/chex_models/chex_stage3/checkpoints/last.ckpt \
+    --chex_config /workspace/chex/conf/chex_stage3.yaml \
+    --output_dir annotations/valid \
+    --split valid \
+    --threshold 0.3 \
+    --batch_size 1
+
+# -----------------------------------------------------------------------------
+# STEP 3: Train VLG-CBM with sparse final layer
+# -----------------------------------------------------------------------------
+python vlg_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --annotation_dir annotations/train \
+    --val_annotation_dir annotations/valid \
+    --concepts concepts/chexpert_concepts.json \
+    --backbone densenet121 \
+    --cbl_epochs 20 \
+    --cbl_lr 1e-4 \
+    --min_concept_freq 0.01 \
+    --saga_lam 0.001 \
+    --saga_iters 2000 \
+    --limit_samples 10000 \
+    --batch_size 32 \
+    --seed 42 \
+    --output saved_models/vlg_cbm_10k
+
+# -----------------------------------------------------------------------------
+# VLG-CBM with dense final layer (no sparsity)
+# -----------------------------------------------------------------------------
+python vlg_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --annotation_dir annotations/train \
+    --val_annotation_dir annotations/valid \
+    --concepts concepts/chexpert_concepts.json \
+    --backbone densenet121 \
+    --cbl_epochs 20 \
+    --cbl_lr 1e-4 \
+    --min_concept_freq 0.01 \
+    --dense \
+    --limit_samples 10000 \
+    --batch_size 32 \
+    --seed 42 \
+    --output saved_models/vlg_cbm_dense_10k
+
+# -----------------------------------------------------------------------------
+# VLG-CBM with ResNet-50 backbone
+# -----------------------------------------------------------------------------
+python vlg_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --annotation_dir annotations/train \
+    --val_annotation_dir annotations/valid \
+    --concepts concepts/chexpert_concepts.json \
+    --backbone resnet50 \
+    --cbl_epochs 20 \
+    --limit_samples 10000 \
+    --batch_size 32 \
+    --seed 42 \
+    --output saved_models/vlg_cbm_resnet_10k
+
+# -----------------------------------------------------------------------------
+# VLG-CBM Evaluation only
+# -----------------------------------------------------------------------------
+python vlg_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --annotation_dir annotations/train \
+    --val_annotation_dir annotations/valid \
+    --concepts concepts/chexpert_concepts.json \
+    --output saved_models/vlg_cbm_10k \
+    --eval_only
+
+# -----------------------------------------------------------------------------
+# VLG-CBM Full training (all samples)
+# -----------------------------------------------------------------------------
+python vlg_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --annotation_dir annotations/train_full \
+    --val_annotation_dir annotations/valid \
+    --concepts concepts/chexpert_concepts.json \
+    --backbone densenet121 \
+    --cbl_epochs 20 \
+    --cbl_lr 1e-4 \
+    --min_concept_freq 0.01 \
+    --saga_lam 0.001 \
+    --saga_iters 2000 \
+    --batch_size 32 \
+    --seed 42 \
+    --output saved_models/vlg_cbm_full
+
+# =============================================================================
+# ARGUMENT REFERENCE - STANDARD TRAINING
+# =============================================================================
+# Data:
+#   --data_dir          Path to CheXpert-v1.0-small directory (required)
+#   --competition_labels  Use only 5 competition labels
+#   --pathology_labels    Use only 12 pathology labels (excludes No Finding, Support Devices)
+#   --uncertain_strategy  ones|zeros|ignore (default: ones)
+#   --frontal_only       Use only frontal views (default: True)
+#   --limit_samples      Limit training samples (for testing)
+#   --seed               Random seed for reproducibility (default: 42)
+#
+# Model:
+#   --model              densenet121|resnet50 (default: densenet121)
+#   --pretrained         Use ImageNet pretrained weights (default: True)
+#   --dropout            Dropout before classifier (default: 0.0)
+#   --freeze_backbone    Only train classifier head
+#
+# Training:
+#   --epochs             Number of epochs (default: 10)
+#   --batch_size         Batch size (default: 32)
+#   --lr                 Learning rate (default: 1e-4)
+#   --weight_decay       Weight decay (default: 1e-5)
+#   --img_size           Image size (default: 224)
+#   --num_workers        DataLoader workers (default: 0)
+#   --use_pos_weight     Use class-balanced BCE loss
+#
+# Wandb:
+#   --use_wandb          Enable Weights & Biases logging
+#   --wandb_project      W&B project name (default: chexpert-cbm)
+#   --wandb_entity       W&B entity/team (optional)
+#   --wandb_run_name     Custom run name (optional)
+#
+# Plotting:
+#   --save_plots         Save training plots (default: True)
+#   --plot_every         Generate plots every N epochs (default: 1)
+#
+# Output:
+#   --output             Output directory for checkpoints (required)
+#   --device             cuda|cpu (default: cuda)
+
+# =============================================================================
+# ARGUMENT REFERENCE - LABEL-FREE CBM
+# =============================================================================
+# Data:
+#   --data_dir           Path to CheXpert-v1.0-small directory (required)
+#   --concept_file       Path to concepts text file (required)
+#   --limit_samples      Limit training samples
+#   --seed               Random seed (default: 42)
+#
+# Model:
+#   --backbone           densenet121|resnet50 (default: densenet121)
+#   --clip_name          CLIP model: openai|biomedclip (default: biomedclip)
+#
+# Concept Filtering:
+#   --clip_cutoff        Max cosine sim between concept and class (default: 0.28)
+#   --interpretability_cutoff  Min projection weight to keep concept (default: 0.1)
+#
+# SAGA:
+#   --lam                Sparsity regularization (default: 0.0002)
+#   --n_iters            SAGA iterations (default: 2000)
+#
+# Output:
+#   --output             Output directory (required)
+#   --eval_only          Only run evaluation
+#   --device             cuda|cpu (default: cuda)
+
+# =============================================================================
+# ARGUMENT REFERENCE - VLG-CBM
+# =============================================================================
+# Data:
+#   --data_dir           Path to CheXpert-v1.0-small directory (required)
+#   --annotation_dir     Path to ChEX annotations for train (required)
+#   --val_annotation_dir Path to ChEX annotations for val (required)
+#   --concepts           Path to concepts JSON file (required)
+#   --limit_samples      Limit training samples
+#   --seed               Random seed (default: 42)
+#
+# Model:
+#   --backbone           densenet121|resnet50 (default: densenet121)
+#   --pretrained         Use ImageNet pretrained weights (default: True)
+#
+# Concept Filtering:
+#   --min_concept_freq   Min annotation frequency to keep concept (default: 0.01 = 1%)
+#
+# CBL Training:
+#   --cbl_epochs         Epochs for CBL training (default: 20)
+#   --cbl_lr             Learning rate for CBL (default: 1e-4)
+#   --batch_size         Batch size (default: 32)
+#
+# Final Layer:
+#   --dense              Use dense final layer instead of sparse
+#   --saga_lam           Sparsity regularization (default: 0.001)
+#   --saga_iters         SAGA iterations (default: 2000)
+#
+# Output:
+#   --output             Output directory (required)
+#   --eval_only          Only run evaluation
+#   --device             cuda|cpu (default: cuda)
+
+# =============================================================================
+# ARGUMENT REFERENCE - ANNOTATION GENERATION
+# =============================================================================
+# Data:
+#   --concepts           Path to concepts JSON file (required)
+#   --data_dir           Path to CheXpert-v1.0-small directory (required)
+#   --split              train|valid (default: train)
+#   --max_images         Max images to annotate (optional)
+#
+# ChEX Model:
+#   --chex_ckpt          Path to ChEX checkpoint (required)
+#   --chex_config        Path to ChEX config (required)
+#   --threshold          Detection confidence threshold (default: 0.3)
+#   --batch_size         Batch size (default: 1)
+#
+# Output:
+#   --output_dir         Output directory for annotations (required)

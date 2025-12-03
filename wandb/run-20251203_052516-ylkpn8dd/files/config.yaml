@@ -1,0 +1,139 @@
+_wandb:
+    value:
+        cli_version: 0.23.0
+        code_path: source-chexpert-cbm-train.py
+        e:
+            hygpimeajlytjnsm5629uwt4jysyq4kj:
+                args:
+                    - --data_dir
+                    - /workspace/CheXpert-v1.0-small
+                    - --limit_samples
+                    - "10000"
+                    - --epochs
+                    - "3"
+                    - --use_wandb
+                    - --wandb_project
+                    - chexpert-cbm
+                    - --output
+                    - checkpoints/test_wandb
+                    - --batch_size
+                    - "128"
+                    - --competition_labels
+                codePath: train.py
+                codePathLocal: train.py
+                cpu_count: 128
+                cpu_count_logical: 256
+                cudaVersion: "12.9"
+                disk:
+                    /:
+                        total: "799769255936"
+                        used: "395230842880"
+                email: atharv.ramesh2003@gmail.com
+                executable: /opt/conda/envs/atharv/bin/python
+                gpu: NVIDIA A100-SXM4-80GB
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "85899345920"
+                      name: NVIDIA A100-SXM4-80GB
+                      uuid: GPU-fd555fdc-26f3-8d1c-bcdf-fd92510000f3
+                host: atharv-pod
+                memory:
+                    total: "1081722974208"
+                os: Linux-5.15.0-141-generic-x86_64-with-glibc2.35
+                program: /workspace/CHEX_CBM/train.py
+                python: CPython 3.12.12
+                root: /workspace/CHEX_CBM
+                startedAt: "2025-12-03T05:25:16.997687Z"
+                writerId: hygpimeajlytjnsm5629uwt4jysyq4kj
+        m: []
+        python_version: 3.12.12
+        t:
+            "1":
+                - 1
+                - 5
+                - 41
+                - 53
+            "2":
+                - 1
+                - 5
+                - 41
+                - 53
+            "3":
+                - 13
+                - 15
+                - 16
+            "4": 3.12.12
+            "5": 0.23.0
+            "10":
+                - 20
+            "12": 0.23.0
+            "13": linux-x86_64
+batch_size:
+    value: 128
+competition_labels:
+    value: true
+data_dir:
+    value: /workspace/CheXpert-v1.0-small
+device:
+    value: cuda
+dropout:
+    value: 0
+epochs:
+    value: 3
+freeze_backbone:
+    value: false
+frontal_only:
+    value: true
+img_size:
+    value: 224
+labels:
+    value:
+        - Atelectasis
+        - Cardiomegaly
+        - Consolidation
+        - Edema
+        - Pleural Effusion
+limit_samples:
+    value: 10000
+lr:
+    value: 0.0001
+model:
+    value: densenet121
+num_classes:
+    value: 5
+num_workers:
+    value: 0
+output:
+    value: checkpoints/test_wandb
+pathology_labels:
+    value: false
+plot_every:
+    value: 1
+pretrained:
+    value: true
+save_plots:
+    value: true
+seed:
+    value: 42
+start_time:
+    value: 2025-12-03T05:25:16.497296
+train_samples:
+    value: 10000
+uncertain_strategy:
+    value: ones
+use_pos_weight:
+    value: false
+use_wandb:
+    value: true
+val_samples:
+    value: 202
+wandb_entity:
+    value: null
+wandb_project:
+    value: chexpert-cbm
+wandb_run_name:
+    value: null
+weight_decay:
+    value: 1e-05
