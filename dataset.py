@@ -143,6 +143,13 @@ class CheXpertDataset(Dataset):
         label = self.targets[idx]
         
         return img, label
+
+    def get_image_path(self, idx: int) -> str:
+        """Return the absolute image path without loading the file."""
+        if idx < 0 or idx >= len(self.df):
+            raise IndexError(f"Index {idx} out of range for dataset of size {len(self.df)}")
+        rel_path = self.df.iloc[idx]['Path']
+        return os.path.join(self.img_root, rel_path)
     
     def get_pos_weights(self) -> torch.Tensor:
         """Compute positive class weights for imbalanced data (neg/pos ratio)."""

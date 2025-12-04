@@ -33,6 +33,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import roc_auc_score, average_precision_score
 from tqdm import tqdm
+import torchvision.transforms.functional as TF
 
 # Import from our existing modules
 from dataset import (
@@ -51,6 +52,24 @@ except ImportError:
     BIOMEDCLIP_AVAILABLE = False
     print("Warning: open_clip not available. Install with: pip install open_clip_torch")
 
+# Constants for undoing dataset normalization before feeding encoders
+IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+
+
+def sanitize_tag(tag: str) -> str:
+    """
+    Convert arbitrary identifiers (e.g., CLIP names) into safe filename fragments.
+    Keeps alphanumeric characters plus '-' and '_'; everything else becomes '-'.
+    """
+    safe = []
+    for ch in tag:
+        if ch.isalnum() or ch in ("-", "_"):
+            safe.append(ch)
+        else:
+            safe.append("-")
+    return "".join(safe)
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Label-Free CBM for CheXpert")
@@ -65,7 +84,7 @@ def parse_args():
     parser.add_argument("--uncertain_strategy", type=str, default="ones",
                         choices=["ones", "zeros"],
                         help="How to handle uncertain labels")
-    parser.add_argument("--limit_samples", type=int, default=None,
+    parser.add_argument("--limit_samples", type=int, default=10000,
                         help="Limit training samples")
     parser.add_argument("--seed", type=int, default=42)
     
@@ -76,7 +95,8 @@ def parse_args():
     parser.add_argument("--backbone_ckpt", type=str, default=None,
                         help="Path to finetuned backbone checkpoint")
     parser.add_argument("--clip_name", type=str, default="biomedclip",
-                        help="CLIP model to use: biomedclip or openai")
+                        choices=["biomedclip", "xrayclip"],
+                        help="CLIP model to use")
     
     # CBM parameters
     parser.add_argument("--clip_cutoff", type=float, default=0.20,
@@ -120,6 +140,23 @@ def load_concepts(path: str) -> list:
     return concepts
 
 
+def tensor_batch_to_pil(images: torch.Tensor) -> list:
+    """
+    Convert a batch of normalized tensors (N, C, H, W) to PIL images.
+    Assumes ImageNet normalization; clips to [0, 1] before conversion.
+    """
+    if images.ndim != 4:
+        raise ValueError("Expected images with shape (N, C, H, W)")
+    imgs = images.detach()
+    if imgs.shape[1] == 1:
+        imgs = imgs.repeat(1, 3, 1, 1)
+    mean = IMAGENET_MEAN.to(imgs.device)
+    std = IMAGENET_STD.to(imgs.device)
+    imgs = imgs * std + mean
+    imgs = imgs.clamp(0.0, 1.0).cpu()
+    return [TF.to_pil_image(img) for img in imgs]
+
+
 def cos_similarity_cubed(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """Cubed cosine similarity (per-column)."""
     a_norm = F.normalize(a, dim=0)
@@ -145,8 +182,9 @@ class BiomedCLIPEncoder:
     @torch.no_grad()
     def encode_images(self, images: torch.Tensor) -> torch.Tensor:
         """Encode batch of images."""
-        images = images.to(self.device)
-        features = self.model.encode_image(images)
+        pil_images = tensor_batch_to_pil(images)
+        clip_inputs = torch.stack([self.preprocess(img) for img in pil_images]).to(self.device)
+        features = self.model.encode_image(clip_inputs)
         return features.cpu()
     
     @torch.no_grad()
@@ -159,6 +197,40 @@ class BiomedCLIPEncoder:
     def get_preprocess(self):
         """Return image preprocessing transform."""
         return self.preprocess
+
+
+class XrayCLIPEncoder:
+    """
+    Wrapper for Stanford AIMI XrayCLIP (ViT-L/16 SigLIP).
+    Provides the same encode_images/encode_texts interface.
+    """
+    MODEL_ID = "StanfordAIMI/XrayCLIP__vit-l-16-siglip-384__webli"
+    
+    def __init__(self, device: str = "cuda"):
+        try:
+            from transformers import SiglipModel, SiglipProcessor
+        except ImportError as exc:
+            raise RuntimeError("transformers not installed or too old for SigLIP") from exc
+        
+        self.device = device
+        self.processor = SiglipProcessor.from_pretrained(self.MODEL_ID)
+        self.model = SiglipModel.from_pretrained(self.MODEL_ID)
+        self.model = self.model.to(device).eval()
+    
+    @torch.no_grad()
+    def encode_images(self, images: torch.Tensor) -> torch.Tensor:
+        pil_images = tensor_batch_to_pil(images)
+        inputs = self.processor(images=pil_images, return_tensors="pt")
+        pixel_values = inputs["pixel_values"].to(self.device)
+        features = self.model.get_image_features(pixel_values=pixel_values)
+        return features.cpu()
+    
+    @torch.no_grad()
+    def encode_texts(self, texts: list) -> torch.Tensor:
+        inputs = self.processor(text=texts, padding=True, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        features = self.model.get_text_features(**inputs)
+        return features.cpu()
 
 
 class BackboneEncoder(nn.Module):
@@ -270,12 +342,7 @@ def compute_and_cache_activations(
         bb_feats = backbone(images)
         backbone_features.append(bb_feats)
         
-        # CLIP image features (need to convert grayscale to RGB if needed)
-        if images.shape[1] == 1:
-            images_rgb = images.repeat(1, 3, 1, 1)
-        else:
-            images_rgb = images
-        clip_feats = clip_encoder.encode_images(images_rgb)
+        clip_feats = clip_encoder.encode_images(images)
         clip_img_features.append(clip_feats)
     
     backbone_feats = torch.cat(backbone_features, dim=0)
@@ -471,17 +538,24 @@ def main():
     backbone = BackboneEncoder(args.backbone, args.backbone_ckpt, device)
     print(f"Backbone: {args.backbone}, feature_dim={backbone.feature_dim}")
     
-    # CLIP
-    clip_encoder = BiomedCLIPEncoder(device)
-    print("BiomedCLIP loaded")
+    # CLIP encoder
+    if args.clip_name == "biomedclip":
+        clip_encoder = BiomedCLIPEncoder(device)
+        print("BiomedCLIP loaded")
+    else:
+        clip_encoder = XrayCLIPEncoder(device)
+        print("XrayCLIP (SigLIP) loaded")
     
     # =========================================
     # Compute activations
     # =========================================
-    cache_base = os.path.join(
-        args.activation_dir,
-        f"chexpert_{args.backbone}_{len(train_dataset)}"
+    # Include clip model to keep caches for BiomedCLIP vs XrayCLIP separate
+    cache_tag = "chexpert_{}_{}_{}".format(
+        sanitize_tag(args.backbone),
+        sanitize_tag(args.clip_name),
+        len(train_dataset)
     )
+    cache_base = os.path.join(args.activation_dir, cache_tag)
     
     train_bb, train_clip_img, clip_txt = compute_and_cache_activations(
         train_dataset, backbone, clip_encoder, concepts,
@@ -509,12 +583,24 @@ def main():
     # Compute image-concept similarities
     train_clip_sim = train_clip_img @ clip_txt.T
     val_clip_sim = val_clip_img @ clip_txt.T
+    print(f"Train CLIP similarities: min={train_clip_sim.min():.4f}, "
+          f"max={train_clip_sim.max():.4f}, "
+          f"mean={train_clip_sim.mean():.4f}")
     
     # =========================================
     # Filter concepts by CLIP activation
     # =========================================
     print("\nFiltering concepts by CLIP activation...")
     highest = torch.mean(torch.topk(train_clip_sim, dim=0, k=5)[0], dim=0)
+
+    concept_similarities = [
+        (concepts[i], highest[i].item())
+        for i in range(len(concepts))
+    ]
+    concept_similarities.sort(key=lambda x: x[1], reverse=True)
+    print("Top-5 mean CLIP similarities per concept:")
+    for name, score in concept_similarities:
+        print(f"  {name}: {score:.4f}")
     
     keep_mask = highest > args.clip_cutoff
     removed_clip = [concepts[i] for i in range(len(concepts)) if not keep_mask[i]]
@@ -522,6 +608,10 @@ def main():
     
     print(f"Removed {len(removed_clip)} concepts (CLIP cutoff)")
     print(f"Remaining: {len(concepts)} concepts")
+    if len(concepts) == 0:
+        print("ERROR: All concepts were removed by the CLIP cutoff. "
+              "Try lowering --clip_cutoff or using --limit_strategy random.")
+        return
     
     # Filter features
     clip_txt = clip_txt[keep_mask]
@@ -556,6 +646,10 @@ def main():
     
     print(f"Removed {len(removed_interp)} concepts (interpretability)")
     print(f"Final concepts: {len(concepts)}")
+    if len(concepts) == 0:
+        print("ERROR: No concepts remain after interpretability filtering. "
+              "Try lowering --interpretability_cutoff.")
+        return
     
     # Update projection layer
     W_c = proj_layer.weight[interpretable.cpu()].clone()

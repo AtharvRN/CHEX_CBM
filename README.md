@@ -235,6 +235,16 @@ python label_free_cbm.py \
     --output saved_models/lf_cbm_10k \
     --eval_only
 
+# Alternative: Stanford AIMI XrayCLIP (SigLIP ViT-L/16)
+python label_free_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --concept_file concepts/chexpert_concepts.txt \
+    --backbone densenet121 \
+    --clip_name xrayclip \
+    --batch_size 32 \
+    --clip_cutoff 0.25 \
+    --output saved_models/lf_cbm_xrayclip
+
 # Alternative: ResNet-50 backbone
 python label_free_cbm.py \
     --data_dir /workspace/CheXpert-v1.0-small \

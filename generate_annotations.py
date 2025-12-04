@@ -316,6 +316,11 @@ def main():
     # =========================================
     # Load ChEX model
     # =========================================
+    # Remove our local dataset module/path so ChEX can import its own dataset package
+    sys.modules.pop('dataset', None)
+    if str(PROJECT_ROOT) in sys.path:
+        sys.path.remove(str(PROJECT_ROOT))
+
     if not CHEX_AVAILABLE:
         print("\nERROR: ChEX not available. Cannot generate annotations.")
         print("Please ensure ChEX is installed at /workspace/chex/src")

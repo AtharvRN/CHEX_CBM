@@ -1,0 +1,32 @@
+{
+  "auroc": {
+    "Enlarged Cardiomediastinum": 0.39941089837997057,
+    "Cardiomegaly": 0.6172014260249554,
+    "Lung Opacity": 0.44605329311211667,
+    "Lung Lesion": 0.9054726368159204,
+    "Edema": 0.590922619047619,
+    "Consolidation": 0.5722426470588236,
+    "Pneumonia": 0.6301546391752577,
+    "Atelectasis": 0.49742782152230974,
+    "Pneumothorax": 0.5421245421245422,
+    "Pleural Effusion": 0.5961277173913043,
+    "Pleural Other": 0.900497512437811,
+    "Fracture": NaN,
+    "mean": 0.6088759775536936
+  },
+  "ap": {
+    "Enlarged Cardiomediastinum": 0.4525629378065362,
+    "Cardiomegaly": 0.44067289446602853,
+    "Lung Opacity": 0.5604440572130513,
+    "Lung Lesion": 0.05,
+    "Edema": 0.2587579970320361,
+    "Consolidation": 0.26644651630831295,
+    "Pneumonia": 0.09927985947330584,
+    "Atelectasis": 0.39264362219092375,
+    "Pneumothorax": 0.22838860742688946,
+    "Pleural Effusion": 0.4369310252683061,
+    "Pleural Other": 0.047619047619047616,
+    "Fracture": 0.0,
+    "mean": 0.2694788804003698
+  }
+}

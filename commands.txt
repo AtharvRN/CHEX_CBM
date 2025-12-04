@@ -269,6 +269,24 @@ python label_free_cbm.py \
     --output saved_models/lf_cbm_full
 
 # -----------------------------------------------------------------------------
+# LABEL-FREE CBM - Using Stanford AIMI XrayCLIP (ViT-L/16 SigLIP)
+# -----------------------------------------------------------------------------
+python label_free_cbm.py \
+    --data_dir /workspace/CheXpert-v1.0-small \
+    --concept_file concepts/chexpert_concepts.txt \
+    --backbone densenet121 \
+    --clip_name xrayclip \
+    --batch_size 32 \
+    --clip_cutoff 0.25 \
+    --interpretability_cutoff 0.1 \
+    --lam 0.0002 \
+    --seed 42 \
+    --output saved_models/lf_cbm_xrayclip
+
+
+python label_free_cbm.py     --data_dir /workspace/CheXpert-v1.0-small     --concepts concepts/chexpert_concepts.txt     --backbone densenet121     --clip_name xrayclip     --batch_size 256     --clip_cutoff 0.25     --interpretability_cutoff 0.1     --lam 0.0002     --seed 42     --output saved_models/lf_cbm_xrayclip --backbone_ckpt ./checkpoints/xrv_all_finetune/best_model.pth --limit_samples 5000
+
+# -----------------------------------------------------------------------------
 # LABEL-FREE CBM - ResNet-50 backbone
 # -----------------------------------------------------------------------------
 python label_free_cbm.py \
