@@ -22,14 +22,10 @@ from datetime import datetime
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
-from torch.optim import Adam, AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
-from sklearn.metrics import roc_auc_score, average_precision_score, roc_curve, precision_recall_curve
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
 
 from dataset import (
     CheXpertDataset, 
@@ -39,14 +35,16 @@ from dataset import (
     get_transforms
 )
 from models import get_model
-
-# Optional wandb import
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-    print("wandb not installed. Install with: pip install wandb")
+from utils.metrics import compute_all_metrics
+from utils.plotting import (
+    plot_confusion_heatmap,
+    plot_label_distribution,
+    plot_per_class_auroc,
+    plot_pr_curves,
+    plot_roc_curves,
+    plot_training_curves,
+)
+from utils.wandb_utils import WANDB_AVAILABLE, init_wandb, log_plots_to_wandb, log_to_wandb, wandb
 
 
 def parse_args():
@@ -113,390 +111,6 @@ def parse_args():
                         help="Generate plots every N epochs")
     
     return parser.parse_args()
-
-
-def compute_auroc(targets: np.ndarray, predictions: np.ndarray, labels: list) -> dict:
-    """
-    Compute AUROC for each label and mean AUROC.
-    
-    Args:
-        targets: Ground truth labels (N, num_classes)
-        predictions: Predicted probabilities (N, num_classes)
-        labels: List of label names
-        
-    Returns:
-        Dictionary with per-class and mean AUROC
-    """
-    aurocs = {}
-    valid_aurocs = []
-    
-    for i, label in enumerate(labels):
-        # Check if there are both positive and negative samples
-        unique_vals = np.unique(targets[:, i])
-        if len(unique_vals) < 2:
-            aurocs[label] = float('nan')
-        else:
-            auc = roc_auc_score(targets[:, i], predictions[:, i])
-            aurocs[label] = auc
-            valid_aurocs.append(auc)
-    
-    aurocs['mean'] = np.mean(valid_aurocs) if valid_aurocs else float('nan')
-    return aurocs
-
-
-def compute_all_metrics(targets: np.ndarray, predictions: np.ndarray, labels: list) -> dict:
-    """
-    Compute comprehensive metrics for each label.
-    
-    Args:
-        targets: Ground truth labels (N, num_classes)
-        predictions: Predicted probabilities (N, num_classes)
-        labels: List of label names
-        
-    Returns:
-        Dictionary with per-class AUROC, AP, and means
-    """
-    metrics = {'auroc': {}, 'ap': {}}
-    valid_aurocs = []
-    valid_aps = []
-    
-    for i, label in enumerate(labels):
-        unique_vals = np.unique(targets[:, i])
-        if len(unique_vals) < 2:
-            metrics['auroc'][label] = float('nan')
-            metrics['ap'][label] = float('nan')
-        else:
-            auc = roc_auc_score(targets[:, i], predictions[:, i])
-            ap = average_precision_score(targets[:, i], predictions[:, i])
-            metrics['auroc'][label] = auc
-            metrics['ap'][label] = ap
-            valid_aurocs.append(auc)
-            valid_aps.append(ap)
-    
-    metrics['auroc']['mean'] = np.mean(valid_aurocs) if valid_aurocs else float('nan')
-    metrics['ap']['mean'] = np.mean(valid_aps) if valid_aps else float('nan')
-    return metrics
-
-
-# ============================================================================
-# Plotting Functions
-# ============================================================================
-
-def plot_training_curves(history: list, output_dir: str, labels: list):
-    """Plot training loss and validation AUROC curves."""
-    epochs = [h['epoch'] for h in history]
-    train_losses = [h['train_loss'] for h in history]
-    val_aurocs = [h['val_mean_auroc'] for h in history]
-    lrs = [h['lr'] for h in history]
-    
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    
-    # Training loss
-    axes[0].plot(epochs, train_losses, 'b-', linewidth=2, marker='o')
-    axes[0].set_xlabel('Epoch')
-    axes[0].set_ylabel('Training Loss')
-    axes[0].set_title('Training Loss')
-    axes[0].grid(True, alpha=0.3)
-    
-    # Validation AUROC
-    axes[1].plot(epochs, val_aurocs, 'g-', linewidth=2, marker='o')
-    axes[1].set_xlabel('Epoch')
-    axes[1].set_ylabel('Mean AUROC')
-    axes[1].set_title('Validation Mean AUROC')
-    axes[1].grid(True, alpha=0.3)
-    axes[1].set_ylim([0, 1])
-    
-    # Learning rate
-    axes[2].plot(epochs, lrs, 'r-', linewidth=2, marker='o')
-    axes[2].set_xlabel('Epoch')
-    axes[2].set_ylabel('Learning Rate')
-    axes[2].set_title('Learning Rate Schedule')
-    axes[2].grid(True, alpha=0.3)
-    axes[2].set_yscale('log')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'training_curves.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    return os.path.join(output_dir, 'training_curves.png')
-
-
-def plot_per_class_auroc(aurocs: dict, labels: list, output_dir: str, epoch: int = None):
-    """Plot bar chart of per-class AUROC scores."""
-    fig, ax = plt.subplots(figsize=(12, 5))
-    
-    # Get values for each label
-    values = [aurocs.get(label, 0) for label in labels]
-    colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(labels)))
-    
-    bars = ax.bar(range(len(labels)), values, color=colors)
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=45, ha='right')
-    ax.set_ylabel('AUROC')
-    ax.set_ylim([0, 1])
-    ax.axhline(y=aurocs.get('mean', 0), color='red', linestyle='--', linewidth=2, 
-               label=f'Mean: {aurocs.get("mean", 0):.4f}')
-    ax.legend()
-    ax.grid(axis='y', alpha=0.3)
-    
-    title = 'Per-Class Validation AUROC'
-    if epoch is not None:
-        title += f' (Epoch {epoch})'
-    ax.set_title(title)
-    
-    # Add value labels on bars
-    for bar, val in zip(bars, values):
-        if not np.isnan(val):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, 
-                   f'{val:.3f}', ha='center', va='bottom', fontsize=8)
-    
-    plt.tight_layout()
-    filename = f'per_class_auroc_epoch{epoch}.png' if epoch else 'per_class_auroc.png'
-    plt.savefig(os.path.join(output_dir, filename), dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    return os.path.join(output_dir, filename)
-
-
-def plot_roc_curves(targets: np.ndarray, predictions: np.ndarray, labels: list, output_dir: str):
-    """Plot ROC curves for all classes."""
-    num_labels = len(labels)
-    cols = min(4, num_labels)
-    rows = (num_labels + cols - 1) // cols
-    
-    fig, axes = plt.subplots(rows, cols, figsize=(4*cols, 4*rows))
-    axes = np.atleast_2d(axes)
-    
-    for i, label in enumerate(labels):
-        row, col = i // cols, i % cols
-        ax = axes[row, col]
-        
-        unique_vals = np.unique(targets[:, i])
-        if len(unique_vals) >= 2:
-            fpr, tpr, _ = roc_curve(targets[:, i], predictions[:, i])
-            auc = roc_auc_score(targets[:, i], predictions[:, i])
-            ax.plot(fpr, tpr, 'b-', linewidth=2, label=f'AUC={auc:.3f}')
-        ax.plot([0, 1], [0, 1], 'k--', alpha=0.5)
-        ax.set_xlim([0, 1])
-        ax.set_ylim([0, 1])
-        ax.set_xlabel('FPR')
-        ax.set_ylabel('TPR')
-        ax.set_title(label)
-        ax.legend(loc='lower right')
-        ax.grid(True, alpha=0.3)
-    
-    # Hide empty subplots
-    for i in range(num_labels, rows * cols):
-        row, col = i // cols, i % cols
-        axes[row, col].axis('off')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'roc_curves.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    return os.path.join(output_dir, 'roc_curves.png')
-
-
-def plot_pr_curves(targets: np.ndarray, predictions: np.ndarray, labels: list, output_dir: str):
-    """Plot Precision-Recall curves for all classes."""
-    num_labels = len(labels)
-    cols = min(4, num_labels)
-    rows = (num_labels + cols - 1) // cols
-    
-    fig, axes = plt.subplots(rows, cols, figsize=(4*cols, 4*rows))
-    axes = np.atleast_2d(axes)
-    
-    for i, label in enumerate(labels):
-        row, col = i // cols, i % cols
-        ax = axes[row, col]
-        
-        unique_vals = np.unique(targets[:, i])
-        if len(unique_vals) >= 2:
-            precision, recall, _ = precision_recall_curve(targets[:, i], predictions[:, i])
-            ap = average_precision_score(targets[:, i], predictions[:, i])
-            ax.plot(recall, precision, 'b-', linewidth=2, label=f'AP={ap:.3f}')
-        ax.set_xlim([0, 1])
-        ax.set_ylim([0, 1])
-        ax.set_xlabel('Recall')
-        ax.set_ylabel('Precision')
-        ax.set_title(label)
-        ax.legend(loc='lower left')
-        ax.grid(True, alpha=0.3)
-    
-    # Hide empty subplots
-    for i in range(num_labels, rows * cols):
-        row, col = i // cols, i % cols
-        axes[row, col].axis('off')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'pr_curves.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    return os.path.join(output_dir, 'pr_curves.png')
-
-
-def plot_confusion_heatmap(targets: np.ndarray, predictions: np.ndarray, labels: list, 
-                           output_dir: str, threshold: float = 0.5):
-    """Plot a heatmap showing prediction quality for each class."""
-    preds_binary = (predictions >= threshold).astype(int)
-    
-    # Calculate TP, FP, TN, FN for each class
-    tp = ((preds_binary == 1) & (targets == 1)).sum(axis=0)
-    fp = ((preds_binary == 1) & (targets == 0)).sum(axis=0)
-    tn = ((preds_binary == 0) & (targets == 0)).sum(axis=0)
-    fn = ((preds_binary == 0) & (targets == 1)).sum(axis=0)
-    
-    # Calculate metrics
-    sensitivity = tp / (tp + fn + 1e-8)  # Recall
-    specificity = tn / (tn + fp + 1e-8)
-    precision = tp / (tp + fp + 1e-8)
-    f1 = 2 * precision * sensitivity / (precision + sensitivity + 1e-8)
-    
-    # Create heatmap data
-    data = np.array([sensitivity, specificity, precision, f1])
-    
-    fig, ax = plt.subplots(figsize=(14, 4))
-    im = ax.imshow(data, cmap='RdYlGn', aspect='auto', vmin=0, vmax=1)
-    
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=45, ha='right')
-    ax.set_yticks(range(4))
-    ax.set_yticklabels(['Sensitivity', 'Specificity', 'Precision', 'F1'])
-    
-    # Add text annotations
-    for i in range(4):
-        for j in range(len(labels)):
-            val = data[i, j]
-            color = 'white' if val < 0.5 else 'black'
-            ax.text(j, i, f'{val:.2f}', ha='center', va='center', color=color, fontsize=8)
-    
-    plt.colorbar(im, ax=ax, label='Score')
-    ax.set_title(f'Classification Metrics (threshold={threshold})')
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'metrics_heatmap.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    return os.path.join(output_dir, 'metrics_heatmap.png')
-
-
-def plot_label_distribution(targets: np.ndarray, labels: list, output_dir: str, split: str = 'train'):
-    """Plot the distribution of positive labels in the dataset."""
-    pos_counts = targets.sum(axis=0)
-    total = len(targets)
-    pos_ratios = pos_counts / total
-    
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
-    # Absolute counts
-    colors = plt.cm.Blues(np.linspace(0.4, 0.9, len(labels)))
-    bars = axes[0].bar(range(len(labels)), pos_counts, color=colors)
-    axes[0].set_xticks(range(len(labels)))
-    axes[0].set_xticklabels(labels, rotation=45, ha='right')
-    axes[0].set_ylabel('Count')
-    axes[0].set_title(f'{split.capitalize()} Set: Positive Label Counts')
-    axes[0].grid(axis='y', alpha=0.3)
-    
-    # Positive ratio
-    colors = plt.cm.Oranges(np.linspace(0.4, 0.9, len(labels)))
-    bars = axes[1].bar(range(len(labels)), pos_ratios * 100, color=colors)
-    axes[1].set_xticks(range(len(labels)))
-    axes[1].set_xticklabels(labels, rotation=45, ha='right')
-    axes[1].set_ylabel('Positive Rate (%)')
-    axes[1].set_title(f'{split.capitalize()} Set: Class Imbalance')
-    axes[1].grid(axis='y', alpha=0.3)
-    axes[1].axhline(y=50, color='red', linestyle='--', alpha=0.5, label='Balanced')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'{split}_label_distribution.png'), dpi=150, bbox_inches='tight')
-    plt.close()
-    
-    return os.path.join(output_dir, f'{split}_label_distribution.png')
-
-
-# ============================================================================
-# Wandb Utility Functions
-# ============================================================================
-
-def init_wandb(args, config):
-    """Initialize wandb run."""
-    if not args.use_wandb:
-        return None
-    
-    if not WANDB_AVAILABLE:
-        print("Warning: wandb requested but not installed. Skipping wandb logging.")
-        return None
-    
-    run_name = args.wandb_run_name
-    if run_name is None:
-        run_name = f"{args.model}_{args.uncertain_strategy}"
-        if args.competition_labels:
-            run_name += "_comp"
-        run_name += f"_lr{args.lr}_bs{args.batch_size}"
-        if args.limit_samples:
-            run_name += f"_n{args.limit_samples}"
-    
-    run = wandb.init(
-        project=args.wandb_project,
-        entity=args.wandb_entity,
-        name=run_name,
-        config=config,
-        tags=[args.model, args.uncertain_strategy, 
-              "competition" if args.competition_labels else "all_labels"],
-        reinit=True
-    )
-    
-    # Log code
-    wandb.run.log_code(".", include_fn=lambda path: path.endswith(".py"))
-    
-    return run
-
-
-def log_to_wandb(epoch, train_loss, val_aurocs, val_aps, lr, labels, best_auroc):
-    """Log metrics to wandb."""
-    if not WANDB_AVAILABLE or wandb.run is None:
-        return
-    
-    log_dict = {
-        'epoch': epoch,
-        'train/loss': train_loss,
-        'val/mean_auroc': val_aurocs['mean'],
-        'val/mean_ap': val_aps['mean'],
-        'train/learning_rate': lr,
-        'val/best_auroc': best_auroc,
-    }
-    
-    # Per-class metrics
-    for label in labels:
-        log_dict[f'val/auroc/{label}'] = val_aurocs.get(label, float('nan'))
-        log_dict[f'val/ap/{label}'] = val_aps.get(label, float('nan'))
-    
-    wandb.log(log_dict)
-
-
-def log_plots_to_wandb(history, aurocs, labels, targets, predictions, output_dir):
-    """Log plots to wandb."""
-    if not WANDB_AVAILABLE or wandb.run is None:
-        return
-    
-    # Training curves
-    training_curves_path = plot_training_curves(history, output_dir, labels)
-    wandb.log({"charts/training_curves": wandb.Image(training_curves_path)})
-    
-    # Per-class AUROC bar chart
-    auroc_bar_path = plot_per_class_auroc(aurocs, labels, output_dir)
-    wandb.log({"charts/per_class_auroc": wandb.Image(auroc_bar_path)})
-    
-    # ROC curves
-    roc_path = plot_roc_curves(targets, predictions, labels, output_dir)
-    wandb.log({"charts/roc_curves": wandb.Image(roc_path)})
-    
-    # PR curves
-    pr_path = plot_pr_curves(targets, predictions, labels, output_dir)
-    wandb.log({"charts/pr_curves": wandb.Image(pr_path)})
-    
-    # Confusion heatmap
-    heatmap_path = plot_confusion_heatmap(targets, predictions, labels, output_dir)
-    wandb.log({"charts/metrics_heatmap": wandb.Image(heatmap_path)})
 
 
 def train_epoch(model, loader, criterion, optimizer, device):
@@ -772,7 +386,7 @@ def main():
         
         # Generate plots periodically
         if args.save_plots and epoch % args.plot_every == 0:
-            plot_training_curves(history, plots_dir, labels)
+            plot_training_curves(history, plots_dir)
             plot_per_class_auroc(val_aurocs, labels, plots_dir, epoch)
         
         # Save best model
@@ -809,7 +423,7 @@ def main():
         print("\nGenerating final plots...")
         
         # Training curves
-        plot_training_curves(history, plots_dir, labels)
+        plot_training_curves(history, plots_dir)
         
         # Load best predictions for final plots
         best_preds = np.load(os.path.join(args.output, "best_val_predictions.npy"))
