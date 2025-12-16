@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 
+import contextlib
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -176,7 +177,13 @@ def main():
     
     # Load checkpoint
     print(f"Loading checkpoint: {args.checkpoint}")
-    checkpoint = torch.load(args.checkpoint, map_location='cpu')
+    load_kwargs = {"map_location": "cpu", "weights_only": False}
+    safe_ctx = contextlib.nullcontext()
+    if hasattr(torch.serialization, "safe_globals"):
+        safe_ctx = torch.serialization.safe_globals(
+            ["numpy.core.multiarray.scalar"])
+    with safe_ctx:
+        checkpoint = torch.load(args.checkpoint, **load_kwargs)
     config = checkpoint['config']
     
     # Setup
