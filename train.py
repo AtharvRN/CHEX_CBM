@@ -90,8 +90,8 @@ def parse_args():
                         help="Use class-balanced positive weights in BCE loss")
     
     # Output
-    parser.add_argument("--output", type=str, required=True,
-                        help="Output directory for checkpoints")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Output directory for checkpoints (auto-generated if omitted)")
     parser.add_argument("--device", type=str, default="cuda")
     
     # Wandb
@@ -184,11 +184,33 @@ def save_history(history, path):
         json.dump(history, f, indent=2)
 
 
+def make_output_dir(args):
+    """Generate an output directory if the user did not specify one."""
+    if args.output:
+        return args.output
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_name = args.model.replace("/", "_")
+    lr_str = f"lr{args.lr:.0e}"
+    parts = [
+        model_name,
+        f"bs{args.batch_size}",
+        lr_str,
+        f"seed{args.seed}",
+        timestamp,
+    ]
+    dir_name = "_".join(parts)
+    return os.path.join("checkpoints", dir_name)
+
+
 def main():
     args = parse_args()
     
     # Setup
-    os.makedirs(args.output, exist_ok=True)
+    output_dir = make_output_dir(args)
+    os.makedirs(output_dir, exist_ok=True)
+    args.output = output_dir
+    print(f"Output directory: {output_dir}")
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
