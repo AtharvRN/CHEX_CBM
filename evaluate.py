@@ -42,6 +42,11 @@ def parse_args():
                         help="Save raw predictions to file")
     parser.add_argument("--plot_curves", action="store_true",
                         help="Generate ROC and PR curves")
+    parser.add_argument("--split", type=str, default="valid",
+                        choices=["valid", "test"],
+                        help="Which CheXpert split to evaluate (valid/test)")
+    parser.add_argument("--csv_path", type=str, default=None,
+                        help="Explicit path to a CSV file containing image paths/labels (overrides --split)")
     
     return parser.parse_args()
 
@@ -187,23 +192,25 @@ def main():
     print(f"Evaluating on {num_classes} classes: {labels}")
     
     # Paths
-    val_csv = os.path.join(args.data_dir, "valid.csv")
     img_root = os.path.dirname(args.data_dir)
+    eval_csv = args.csv_path or os.path.join(
+        args.data_dir, f"{args.split}.csv")
+    print(f"Evaluating split '{args.split}' with CSV: {eval_csv}")
     
     # Dataset
     val_transform = get_transforms(config.get('img_size', 224), is_training=False)
     
-    val_dataset = CheXpertDataset(
-        csv_path=val_csv,
+    eval_dataset = CheXpertDataset(
+        csv_path=eval_csv,
         img_root=img_root,
         transform=val_transform,
         labels=labels,
         uncertain_strategy=config.get('uncertain_strategy', 'ones'),
         frontal_only=config.get('frontal_only', True)
     )
-    
-    val_loader = DataLoader(
-        val_dataset,
+
+    eval_loader = DataLoader(
+        eval_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
@@ -227,7 +234,7 @@ def main():
     all_targets = []
     
     with torch.no_grad():
-        for images, labels_batch in tqdm(val_loader):
+        for images, labels_batch in tqdm(eval_loader):
             images = images.to(device)
             logits = model(images)
             all_logits.append(logits.cpu())
