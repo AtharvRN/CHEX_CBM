@@ -364,7 +364,16 @@ def main():
     
     history_path = os.path.join(args.output, "history.json")
     history, best_auroc = load_history(history_path)
-    
+    print("\nEvaluating initial model...")
+    metrics, val_targets, val_preds = evaluate(model, val_loader, device, labels)
+    initial_aurocs = metrics['auroc']
+    initial_aps = metrics['ap']
+    mean_auroc = initial_aurocs['mean']
+    mean_ap = initial_aps['mean']
+    print(f"Initial Val Mean AUROC: {mean_auroc:.4f} | Mean AP: {mean_ap:.4f}")
+    print("Per-class AUROC:")
+    for label in labels:
+        print(f"  {label}: AUROC={initial_aurocs[label]:.4f}, AP={initial_aps[label]:.4f}")
     for epoch in range(1, args.epochs + 1):
         print(f"\nEpoch {epoch}/{args.epochs}")
         print("-" * 40)
