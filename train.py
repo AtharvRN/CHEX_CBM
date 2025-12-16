@@ -163,6 +163,27 @@ def evaluate(model, loader, device, label_names):
     return metrics, targets, probs
 
 
+def load_history(path):
+    """Load history from disk if it exists."""
+    if not os.path.exists(path):
+        return [], 0.0
+    try:
+        with open(path, 'r') as f:
+            history = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        print(f"Warning: failed to load history ({path}); starting fresh.")
+        return [], 0.0
+    best_auroc = max(((entry.get('val_mean_auroc') or 0.0) for entry in history), default=0.0)
+    print(f"Loaded {len(history)} history entries, best AUROC so far {best_auroc:.4f}")
+    return history, best_auroc
+
+
+def save_history(history, path):
+    """Persist history to disk."""
+    with open(path, 'w') as f:
+        json.dump(history, f, indent=2)
+
+
 def main():
     args = parse_args()
     
@@ -341,8 +362,8 @@ def main():
     print("Starting training...")
     print("="*60)
     
-    best_auroc = 0.0
-    history = []
+    history_path = os.path.join(args.output, "history.json")
+    history, best_auroc = load_history(history_path)
     
     for epoch in range(1, args.epochs + 1):
         print(f"\nEpoch {epoch}/{args.epochs}")
@@ -379,6 +400,7 @@ def main():
             'val_aps': val_aps,
             'lr': current_lr
         })
+        save_history(history, history_path)
         
         # Log to wandb
         if WANDB_AVAILABLE and wandb_run:
