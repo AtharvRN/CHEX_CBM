@@ -90,7 +90,10 @@ class CheXpertDataset(Dataset):
         
         # Filter to frontal views only if requested
         if frontal_only:
-            self.df = self.df[self.df['Frontal/Lateral'] == 'Frontal'].reset_index(drop=True)
+            if 'Frontal/Lateral' in self.df.columns:
+                self.df = self.df[self.df['Frontal/Lateral'] == 'Frontal'].reset_index(drop=True)
+            else:
+                print("Warning: 'Frontal/Lateral' column not found; assuming all images are frontal views.")
         
         # Extract labels and convert
         self.targets = self._process_labels()
