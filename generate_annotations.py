@@ -45,6 +45,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from PIL import Image
+from concurrent.futures import ThreadPoolExecutor
+import functools
 
 # Add project paths
 PROJECT_ROOT = Path(__file__).parent
@@ -210,6 +212,47 @@ def save_annotation(output_dir: Path, idx: int, image_path: str, annotations: Li
         json.dump(json_data, f)
 
 
+def process_image_task(
+    task,
+    dataset,
+    model,
+    concepts,
+    device,
+    threshold,
+    concept_batch_size,
+    concept_features,
+    output_dir,
+):
+    """Worker that annotates a single image and writes the JSON."""
+    idx, output_idx = task
+    try:
+        image_path = dataset.get_image_path(idx)
+        annotations = annotate_image_with_chex(
+            model=model,
+            image_path=image_path,
+            concepts=concepts,
+            device=device,
+            threshold=threshold,
+            return_all_regions=True,
+            concept_batch_size=concept_batch_size,
+            concept_features=concept_features,
+        )
+        save_annotation(output_dir, output_idx, image_path, annotations)
+
+        return {
+            "status": "ok",
+            "idx": idx,
+            "annotations": len(annotations),
+            "has_detections": bool(annotations),
+        }
+    except Exception as exc:  # pylint: disable=broad-except
+        return {
+            "status": "error",
+            "idx": idx,
+            "error": str(exc),
+        }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate concept annotations using ChEX",
@@ -242,6 +285,8 @@ def main():
                         help="Concepts to process in parallel")
     parser.add_argument("--device", type=str, 
                         default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Number of parallel annotation workers")
     
     # ChEX model
     parser.add_argument("--model_name", type=str, default="chex_stage3",
@@ -361,11 +406,9 @@ def main():
     # =========================================
     # Generate annotations
     # =========================================
-    print(f"\nAnnotating {n_images - args.start_idx} images with {len(concepts)} concepts...")
-    
     total_annotations = 0
     images_with_detections = 0
-    
+
     # Save metadata
     metadata = {
         "generated_at": datetime.now().isoformat(),
@@ -374,57 +417,53 @@ def main():
         "threshold": args.threshold,
         "model": f"{args.model_name}/{args.run_name}",
         "num_concepts": len(concepts),
+        "workers": args.workers,
         "concepts": concepts
     }
     
     with open(output_dir / "metadata.json", 'w') as f:
         json.dump(metadata, f, indent=2)
-    
-    # Process images
-    for i, idx in enumerate(tqdm(
-        indices[args.start_idx:n_images],
-        desc="Annotating images"
-    )):
-        try:
-            # Get image path
-            image_path = dataset.get_image_path(idx)
-            output_idx = args.start_idx + i
-            
-            # Skip if already processed
-            if (output_dir / f"{output_idx}.json").exists():
-                continue
-            
-            # Annotate
-            os.chdir(CHEX_SRC)
-            annotations = annotate_image_with_chex(
-                model=chex_model,
-                image_path=image_path,
-                concepts=concepts,
-                device=args.device,
-                threshold=args.threshold,
-                return_all_regions=True,
-                concept_batch_size=args.concept_batch_size,
-                concept_features=concept_features,
-            )
-            os.chdir(original_dir)
-            
-            # Save
-            save_annotation(output_dir, output_idx, image_path, annotations)
-            
-            # Stats
-            total_annotations += len(annotations)
-            if annotations:
-                images_with_detections += 1
-                
-        except Exception as e:
-            print(f"\nError processing image {idx}: {e}")
-            os.chdir(original_dir)
+
+    tasks = []
+    for i, idx in enumerate(indices[args.start_idx:n_images]):
+        output_idx = args.start_idx + i
+        task_file = output_dir / f"{output_idx}.json"
+        if task_file.exists():
             continue
+        tasks.append((idx, output_idx))
+
+    print(f"\nAnnotating {len(tasks)} images with {len(concepts)} concepts using {args.workers} workers...")
+    worker = functools.partial(
+        process_image_task,
+        dataset=dataset,
+        model=chex_model,
+        concepts=concepts,
+        device=args.device,
+        threshold=args.threshold,
+        concept_batch_size=args.concept_batch_size,
+        concept_features=concept_features,
+        output_dir=output_dir,
+    )
+
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        for result in tqdm(
+            executor.map(worker, tasks),
+            total=len(tasks),
+            desc="Annotating images"
+        ):
+            if result["status"] == "error":
+                print(f"\nError processing image {result['idx']}: {result['error']}")
+                continue
+
+            total_annotations += result["annotations"]
+            if result["has_detections"]:
+                images_with_detections += 1
     
+    processed = len(tasks)
+
     # =========================================
     # Summary
     # =========================================
-    processed = n_images - args.start_idx
     print("\n" + "="*60)
     print("ANNOTATION COMPLETE")
     print("="*60)
