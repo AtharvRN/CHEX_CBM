@@ -396,13 +396,46 @@ def main():
     # =========================================
     # Precompute concept text features
     # =========================================
-    print("\nEncoding concept texts...")
-    os.chdir(CHEX_SRC)
-    with torch.no_grad():
-        concept_features = chex_model.txt_encoder.encode_sentences(concepts)
+    concept_features_path = output_dir / "concept_features.pt"
+    concept_features_cached = False
+    concept_features = None
+
+    if concept_features_path.exists():
+        try:
+            with torch.no_grad():
+                cached_data = torch.load(concept_features_path, map_location="cpu")
+
+            if (
+                cached_data.get("concepts") == concepts and
+                cached_data.get("model") == args.model_name and
+                cached_data.get("run_name") == args.run_name
+            ):
+                concept_features = cached_data["features"].to(args.device)
+                concept_features_cached = True
+                print("\nLoaded cached concept text encodings.")
+            else:
+                print("\nConcept cache mismatch; recomputing encodings.")
+        except Exception as exc:
+            print(f"\nFailed to load cached concept features: {exc}")
+
+    if not concept_features_cached:
+        print("\nEncoding concept texts...")
+        os.chdir(CHEX_SRC)
+        with torch.no_grad():
+            concept_features = chex_model.txt_encoder.encode_sentences(concepts)
+        os.chdir(original_dir)
+
+        # Save CPU copy for future runs
+        concept_features_cpu = concept_features.cpu()
+        torch.save({
+            "features": concept_features_cpu,
+            "concepts": concepts,
+            "model": args.model_name,
+            "run_name": args.run_name,
+        }, concept_features_path)
+
         concept_features = concept_features.to(args.device)
-    os.chdir(original_dir)
-    
+
     # =========================================
     # Generate annotations
     # =========================================
@@ -418,7 +451,9 @@ def main():
         "model": f"{args.model_name}/{args.run_name}",
         "num_concepts": len(concepts),
         "workers": args.workers,
-        "concepts": concepts
+        "concepts": concepts,
+        "concept_features_cached": concept_features_cached,
+        "concept_features_path": str(concept_features_path)
     }
     
     with open(output_dir / "metadata.json", 'w') as f:
