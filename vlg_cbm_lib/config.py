@@ -89,6 +89,8 @@ def parse_args():
     # Output
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--annotation_workers", type=int, default=0,
+                        help="Thread count for reading annotation JSON files")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--concept_cache", type=str, default=None,
                         help="Path to precomputed annotation cache for training")

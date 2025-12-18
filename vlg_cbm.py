@@ -47,6 +47,9 @@ from vlg_cbm_lib.train import (
 )
 
 
+DEFAULT_ANNOTATION_WORKERS = max(1, min(32, os.cpu_count() or 1))
+
+
 def _save_metrics(metrics: dict, path: str) -> None:
     with open(path, 'w') as f:
         json.dump(metrics, f, indent=2)
@@ -215,23 +218,15 @@ def main():
             ap = baseline_metrics.get(f'ap_{label}', float('nan'))
             print(f"    {label}: AUROC={auroc:.4f}, AP={ap:.4f}")
 
+    annotation_workers = args.annotation_workers if args.annotation_workers > 0 else DEFAULT_ANNOTATION_WORKERS
     concept_matrix, _ = load_annotations(
         args.annotation_dir,
         n_train,
         concepts,
         args.confidence_threshold,
-        num_workers=max(args.num_workers, 1),
+        num_workers=annotation_workers,
         cache_path=args.concept_cache
     )
-    if args.concept_cache:
-        concept_matrix, _ = load_annotations(
-            args.annotation_dir,
-            n_train,
-            concepts,
-            args.confidence_threshold,
-            num_workers=max(args.num_workers, 1),
-            cache_path=args.concept_cache
-        )
 
     if args.val_annotation_dir and os.path.exists(args.val_annotation_dir):
         val_concept_matrix, _ = load_annotations(
@@ -239,7 +234,7 @@ def main():
             n_val,
             concepts,
             args.confidence_threshold,
-            num_workers=max(args.num_workers, 1),
+            num_workers=annotation_workers,
             cache_path=args.val_concept_cache
         )
     else:
