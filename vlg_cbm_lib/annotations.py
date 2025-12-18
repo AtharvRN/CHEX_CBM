@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from tqdm import tqdm
@@ -46,7 +46,8 @@ def load_annotations(
     n_images: int,
     concepts: List[str],
     confidence_threshold: float = 0.15,
-    num_workers: int = 8
+    num_workers: int = 8,
+    cache_path: Optional[str] = None
 ) -> Tuple[np.ndarray, List[str]]:
     """
     Load annotations and create concept presence matrix.
@@ -55,14 +56,25 @@ def load_annotations(
         concept_matrix: (n_images, n_concepts) binary matrix
         image_paths: List of image paths
     """
-    cache_path = _annotation_cache_path(annotation_dir, n_images, concepts, confidence_threshold)
-    if os.path.exists(cache_path):
+    default_cache_path = _annotation_cache_path(annotation_dir, n_images, concepts, confidence_threshold)
+    actual_cache_path = cache_path or default_cache_path
+    requested_cache = cache_path is not None
+
+    if requested_cache and not os.path.exists(cache_path):
+        print(f"Requested concept cache not found at {cache_path}, recomputing...")
+        actual_cache_path = default_cache_path
+        requested_cache = False
+
+    if os.path.exists(actual_cache_path):
         try:
-            cached = np.load(cache_path, allow_pickle=True)
+            cached = np.load(actual_cache_path, allow_pickle=True)
             matrix = cached["concept_matrix"]
             paths = cached["image_paths"].tolist()
             if matrix.shape == (n_images, len(concepts)):
-                print(f"Loaded cached annotations from {cache_path}")
+                if requested_cache:
+                    print(f"Loaded requested concept cache from {actual_cache_path}")
+                else:
+                    print(f"Loaded cached annotations from {actual_cache_path}")
                 return matrix, paths
             else:
                 print("Cached annotation shape mismatch, recomputing...")
@@ -113,11 +125,11 @@ def load_annotations(
     print(f"Found annotations for {found}/{n_images} images")
     try:
         np.savez_compressed(
-            cache_path,
+            actual_cache_path,
             concept_matrix=concept_matrix,
             image_paths=np.array(image_paths, dtype=object)
         )
-        print(f"Cached annotations to {cache_path}")
+        print(f"Cached annotations to {actual_cache_path}")
     except Exception as exc:
         print(f"Warning: failed to cache annotations ({exc})")
 

@@ -220,8 +220,18 @@ def main():
         n_train,
         concepts,
         args.confidence_threshold,
-        num_workers=max(args.num_workers, 1)
+        num_workers=max(args.num_workers, 1),
+        cache_path=args.concept_cache
     )
+    if args.concept_cache:
+        concept_matrix, _ = load_annotations(
+            args.annotation_dir,
+            n_train,
+            concepts,
+            args.confidence_threshold,
+            num_workers=max(args.num_workers, 1),
+            cache_path=args.concept_cache
+        )
 
     if args.val_annotation_dir and os.path.exists(args.val_annotation_dir):
         val_concept_matrix, _ = load_annotations(
@@ -229,7 +239,8 @@ def main():
             n_val,
             concepts,
             args.confidence_threshold,
-            num_workers=max(args.num_workers, 1)
+            num_workers=max(args.num_workers, 1),
+            cache_path=args.val_concept_cache
         )
     else:
         missing = args.val_annotation_dir or "<unspecified>"
