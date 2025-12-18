@@ -4,6 +4,7 @@ from typing import List, Tuple
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
 from vlg_cbm_lib.datasets import BackboneWithConcepts, ConceptLayer
 
@@ -35,10 +36,16 @@ def train_concept_layer(
     best_val_loss = float('inf')
     best_state = None
 
-    for epoch in range(n_epochs):
+    for epoch in tqdm(range(n_epochs), desc="CBL epochs", unit="epoch"):
         model.concept_layer.train()
         train_loss = 0.0
-        for images, concept_labels, _ in train_loader:
+        for images, concept_labels, _ in tqdm(
+            train_loader,
+            desc="concept training",
+            leave=False,
+            total=len(train_loader),
+            unit="batch",
+        ):
             images = images.to(device)
             concept_labels = concept_labels.to(device)
             optimizer.zero_grad()
@@ -53,7 +60,13 @@ def train_concept_layer(
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for images, concept_labels, _ in val_loader:
+            for images, concept_labels, _ in tqdm(
+                val_loader,
+                desc="concept validation",
+                leave=False,
+                total=len(val_loader),
+                unit="batch",
+            ):
                 images = images.to(device)
                 concept_labels = concept_labels.to(device)
                 outputs = model(images)

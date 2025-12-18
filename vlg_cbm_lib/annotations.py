@@ -86,15 +86,30 @@ def load_annotations(
     concept_matrix = np.zeros((n_images, len(concepts)), dtype=np.float32)
     image_paths = [""] * n_images
 
+    error_examples = []
+    error_count = 0
+    max_error_examples = 5
+
     def process_index(idx: int):
         ann_file = os.path.join(annotation_dir, f"{idx}.json")
         if not os.path.exists(ann_file):
-            return idx, "", None
+            return idx, "", None, None
 
-        with open(ann_file, 'r') as f:
-            data = json.load(f)
+        try:
+            with open(ann_file, 'r') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, ValueError) as exc:
+            return idx, "", None, (ann_file, f"Failed to parse JSON ({exc})")
+        except OSError as exc:
+            return idx, "", None, (ann_file, f"I/O error ({exc})")
+
+        if not data:
+            return idx, "", None, (ann_file, "Empty annotation file")
 
         img_entry = data[0]
+        if not isinstance(img_entry, dict):
+            return idx, "", None, (ann_file, "Invalid annotation header")
+
         img_path = img_entry.get('img_path', '')
         row = np.zeros(len(concepts), dtype=np.float32)
 
@@ -108,19 +123,29 @@ def load_annotations(
                 if logit > row[cidx]:
                     row[cidx] = logit
 
-        return idx, img_path, row
+        return idx, img_path, row, None
 
     found = 0
     worker_count = min(max(num_workers, 1), os.cpu_count() or 1)
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {executor.submit(process_index, idx): idx for idx in range(n_images)}
         for future in tqdm(as_completed(futures), total=n_images, desc="Loading annotations"):
-            idx, img_path, row = future.result()
+            idx, img_path, row, error = future.result()
             image_paths[idx] = img_path
+            if error:
+                error_count += 1
+                if len(error_examples) < max_error_examples:
+                    error_examples.append(f"{error[0]}: {error[1]}")
+                continue
             if row is not None:
                 concept_matrix[idx] = row
                 if row.sum() > 0:
                     found += 1
+
+    if error_count > 0:
+        print(f"Skipped {error_count} annotation files due to read/parse errors.")
+        for example in error_examples:
+            print(f"  - {example}")
 
     print(f"Found annotations for {found}/{n_images} images")
     try:
