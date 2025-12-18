@@ -9,6 +9,8 @@ from torch.utils.data import Dataset
 from PIL import Image
 from torchvision import transforms
 from typing import Optional, Callable, List, Tuple
+from pydicom import dcmread
+from pydicom.pixel_data_handlers.util import apply_modality_lut
 
 
 # CheXpert label columns (in order)
@@ -134,7 +136,7 @@ class CheXpertDataset(Dataset):
         full_path = os.path.join(self.img_root, img_path)
         
         # Load image
-        img = Image.open(full_path).convert('RGB')
+        img = self._load_image(full_path)
         
         # Apply transform
         if self.transform is not None:
@@ -153,6 +155,19 @@ class CheXpertDataset(Dataset):
             raise IndexError(f"Index {idx} out of range for dataset of size {len(self.df)}")
         rel_path = self.df.iloc[idx]['Path']
         return os.path.join(self.img_root, rel_path)
+
+    def _load_image(self, path: str) -> Image.Image:
+        """Load either a PNG/JPG or DICOM image and return an RGB PIL image."""
+        ext = os.path.splitext(path)[1].lower()
+        if ext in {'.dcm', '.dicom'}:
+            dicom = dcmread(path)
+            pixel_array = dicom.pixel_array
+            pixel_array = apply_modality_lut(pixel_array, dicom)
+            pixel_array = np.asarray(pixel_array, dtype=np.float32)
+            pixel_array = np.clip(pixel_array, 0, 255)
+            image = Image.fromarray(pixel_array.astype(np.uint8))
+            return image.convert('RGB')
+        return Image.open(path).convert('RGB')
     
     def get_pos_weights(self) -> torch.Tensor:
         """Compute positive class weights for imbalanced data (neg/pos ratio)."""
