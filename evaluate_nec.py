@@ -38,8 +38,11 @@ def parse_args():
                         help="Batch size for concept extraction")
     parser.add_argument("--device", type=str, default="cuda",
                         help="Device for evaluation")
-    parser.add_argument("--split", type=str, default="valid", choices=["valid"],
-                        help="Dataset split to evaluate (currently valid only)")
+    parser.add_argument("--split", type=str, default="valid",
+                        choices=["valid", "test"],
+                        help="Dataset split to evaluate (valid or test)")
+    parser.add_argument("--split_csv", type=str, default=None,
+                        help="Optional CSV path to override the split default")
     return parser.parse_args()
 
 
@@ -132,13 +135,18 @@ class LinearConceptLayer(torch.nn.Module):
         return self.linear(x)
 
 
-def get_dataset(config, labels):
+def get_dataset(config, labels, split="valid", split_csv=None):
     data_dir = config["data_dir"]
-    val_csv = os.path.join(data_dir, "valid.csv")
+    if split_csv:
+        csv_path = split_csv
+    else:
+        csv_path = os.path.join(data_dir, f"{split}.csv")
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"CSV for split '{split}' not found at {csv_path}")
     img_root = os.path.dirname(data_dir)
     transform = get_transforms(config.get("img_size", 224), is_training=False)
     dataset = CheXpertDataset(
-        csv_path=val_csv,
+        csv_path=csv_path,
         img_root=img_root,
         transform=transform,
         labels=labels,
@@ -215,7 +223,12 @@ def main():
         concepts = [line.strip() for line in f.readlines() if line.strip()]
     labels = config["labels"]
 
-    dataset = get_dataset(config, labels)
+    dataset = get_dataset(
+        config,
+        labels,
+        split=args.split,
+        split_csv=args.split_csv
+    )
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
