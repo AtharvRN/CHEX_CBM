@@ -38,6 +38,8 @@ def parse_args():
                         help="Batch size for concept extraction")
     parser.add_argument("--device", type=str, default="cuda",
                         help="Device for evaluation")
+    parser.add_argument("--data_dir", type=str, default=None,
+                        help="Optional override for the dataset root (overrides config.json)")
     parser.add_argument("--split", type=str, default="valid",
                         choices=["valid", "test"],
                         help="Dataset split to evaluate (valid or test)")
@@ -218,6 +220,8 @@ def main():
     with open(os.path.join(model_dir, "config.json"), "r") as f:
         config = json.load(f)
         config["output"] = model_dir
+    if args.data_dir:
+        config["data_dir"] = args.data_dir
 
     with open(os.path.join(model_dir, "concepts.txt"), "r") as f:
         concepts = [line.strip() for line in f.readlines() if line.strip()]
