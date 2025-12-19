@@ -1,12 +1,34 @@
+import json
 import os
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
 from vlg_cbm_lib.datasets import BackboneWithConcepts, ConceptLayer
+
+
+def _plot_training_history(history, output_path: str):
+    """Plot training and validation loss history."""
+    if not history:
+        return
+    epochs = [entry["epoch"] for entry in history]
+    train_losses = [entry["train_loss"] for entry in history]
+    val_losses = [entry["val_loss"] for entry in history]
+    plt.figure()
+    plt.plot(epochs, train_losses, label="Train Loss")
+    plt.plot(epochs, val_losses, label="Val Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Concept Layer Training Loss")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
 
 
 def train_concept_layer(
@@ -16,7 +38,8 @@ def train_concept_layer(
     n_epochs: int,
     lr: float,
     device: str,
-    finetune_backbone: bool = False
+    finetune_backbone: bool = False,
+    checkpoint_dir: Optional[str] = None
 ) -> BackboneWithConcepts:
     """Train the concept bottleneck layer."""
 
@@ -35,6 +58,10 @@ def train_concept_layer(
 
     best_val_loss = float('inf')
     best_state = None
+    history = []
+
+    if checkpoint_dir:
+        os.makedirs(checkpoint_dir, exist_ok=True)
 
     for epoch in tqdm(range(n_epochs), desc="CBL epochs", unit="epoch"):
         model.concept_layer.train()
@@ -80,9 +107,31 @@ def train_concept_layer(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            if checkpoint_dir:
+                torch.save(
+                    model.concept_layer.state_dict(),
+                    os.path.join(checkpoint_dir, "concept_layer_best.pt")
+                )
+
+        if checkpoint_dir:
+            torch.save(
+                model.concept_layer.state_dict(),
+                os.path.join(checkpoint_dir, "concept_layer_latest.pt")
+            )
+        history.append({
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "val_loss": val_loss
+        })
 
     if best_state is not None:
         model.load_state_dict(best_state)
+
+    if checkpoint_dir:
+        history_path = os.path.join(checkpoint_dir, "cbl_history.json")
+        with open(history_path, "w") as f:
+            json.dump(history, f, indent=2)
+        _plot_training_history(history, os.path.join(checkpoint_dir, "cbl_loss.png"))
 
     return model
 

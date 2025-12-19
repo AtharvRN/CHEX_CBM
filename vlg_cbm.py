@@ -294,7 +294,8 @@ def main():
         model = train_concept_layer(
             model, train_loader, val_loader,
             args.cbl_epochs, args.cbl_lr, device,
-            finetune_backbone=args.cbl_finetune_backbone
+            finetune_backbone=args.cbl_finetune_backbone,
+            checkpoint_dir=args.output
         )
         print("\nSaving concept bottleneck checkpoint...")
         save_concept_artifacts(

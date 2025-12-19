@@ -39,7 +39,7 @@ import json
 import argparse
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -64,29 +64,35 @@ else:
 os.environ.setdefault('LOG_DIR', '/workspace/chex_models')
 
 
-def load_concepts(concepts_path: str) -> List[str]:
+def load_concepts(
+    concepts_path: str,
+    subset_labels: Optional[List[str]] = None
+) -> Tuple[Dict[str, List[str]], List[str]]:
     """Load concepts from JSON or TXT file."""
     if concepts_path.endswith('.json'):
         with open(concepts_path, 'r') as f:
             data = json.load(f)
-        
-        if "concepts" in data:
-            concepts_dict = data["concepts"]
-        else:
-            concepts_dict = data
-        
-        # Flatten to unique list
-        all_concepts = []
-        for cls_concepts in concepts_dict.values():
-            all_concepts.extend(cls_concepts)
-        unique_concepts = list(set(all_concepts))
-    else:
-        # TXT file (one concept per line)
-        with open(concepts_path, 'r') as f:
-            unique_concepts = [line.strip() for line in f if line.strip()]
     
-    print(f"Loaded {len(unique_concepts)} unique concepts")
-    return unique_concepts
+    if "concepts" in data:
+        concepts_dict = data["concepts"]
+    else:
+        concepts_dict = data
+    if subset_labels:
+        concepts_dict = {
+            label: concepts_dict[label]
+            for label in subset_labels
+            if label in concepts_dict
+        }
+
+    # Flatten to unique list
+    all_concepts = []
+    for cls_concepts in concepts_dict.values():
+        all_concepts.extend(cls_concepts)
+    unique_concepts = list(set(all_concepts))
+    if not concepts_dict and subset_labels:
+        print(f"Warning: no concepts found for labels {subset_labels}")
+    print(f"Loaded {len(unique_concepts)} unique concepts {'from subset' if subset_labels else ''}")
+    return concepts_dict, unique_concepts
 
 
 def preprocess_image_for_chex(image_path: str, target_size: int = 224):
@@ -268,6 +274,11 @@ def main():
     parser.add_argument("--split", type=str, default="train",
                         choices=["train", "val"],
                         help="Dataset split")
+    parser.add_argument("--concept_subset", type=str, default="pathology",
+                        choices=["all", "pathology", "competition", "custom"],
+                        help="Subset of labels whose concepts should be used")
+    parser.add_argument("--custom_concept_labels", type=str, default=None,
+                        help="Comma-separated labels to use when concept_subset=custom")
     
     # Output
     parser.add_argument("--output_dir", type=str, required=True,
@@ -314,19 +325,42 @@ def main():
     # Set seed
     np.random.seed(args.seed)
     
+    # Bring dataset utilities into scope (needed for label subsets)
+    sys.path.insert(0, str(PROJECT_ROOT))
+    from dataset import (
+        CheXpertDataset,
+        CHEXPERT_PATHOLOGY_LABELS,
+        CHEXPERT_COMPETITION_LABELS,
+        get_transforms,
+    )
+
+    if args.concept_subset == "custom" and not args.custom_concept_labels:
+        parser.error("--custom_concept_labels is required when using concept_subset=custom")
+
+    subset_labels = None
+    if args.concept_subset == "pathology":
+        subset_labels = CHEXPERT_PATHOLOGY_LABELS
+    elif args.concept_subset == "competition":
+        subset_labels = CHEXPERT_COMPETITION_LABELS
+    elif args.concept_subset == "custom":
+        subset_labels = [
+            label.strip()
+            for label in args.custom_concept_labels.split(",")
+            if label.strip()
+        ]
+
     # =========================================
     # Load concepts
     # =========================================
-    concepts = load_concepts(args.concepts)
-    
+    _, concepts = load_concepts(
+        args.concepts,
+        subset_labels=None if args.concept_subset == "all" else subset_labels
+    )
+
     # =========================================
     # Load dataset
     # =========================================
     print("\nLoading CheXpert dataset...")
-    
-    # Import our dataset
-    sys.path.insert(0, str(PROJECT_ROOT))
-    from dataset import CheXpertDataset, CHEXPERT_PATHOLOGY_LABELS, get_transforms
     
     if args.split == "train":
         csv_path = os.path.join(args.data_dir, "train.csv")
