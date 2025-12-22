@@ -438,7 +438,6 @@ def main():
         try:
             with torch.no_grad():
                 cached_data = torch.load(concept_features_path, map_location="cpu")
-
             if (
                 cached_data.get("concepts") == concepts and
                 cached_data.get("model") == args.model_name and
