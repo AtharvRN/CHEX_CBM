@@ -95,8 +95,10 @@ def parse_args():
     parser.add_argument("--backbone_ckpt", type=str, default=None,
                         help="Path to finetuned backbone checkpoint")
     parser.add_argument("--clip_name", type=str, default="biomedclip",
-                        choices=["biomedclip", "xrayclip"],
+                        choices=["biomedclip", "xrayclip", "chexpertzero"],
                         help="CLIP model to use")
+    parser.add_argument("--chexpertzero_checkpoint", type=str, default="stanford-chexpert/chexpert-zero",
+                        help="HuggingFace repo/checkpoint for CheXpertZero")
     
     # CBM parameters
     parser.add_argument("--clip_cutoff", type=float, default=0.20,
@@ -231,6 +233,30 @@ class XrayCLIPEncoder:
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         features = self.model.get_text_features(**inputs)
         return features.cpu()
+
+
+class CheXpertZeroEncoder:
+    """Loader for the CheXpertZero zero-shot model."""
+
+    def __init__(self, checkpoint: str = "stanford-chexpert/chexpert-zero", device: str = "cuda"):
+        try:
+            import chexpertzero
+        except ImportError as exc:
+            raise RuntimeError(
+                "CheXpertZero encoder requires the `chexpertzero` package. "
+                "Install it via `pip install chexpertzero`."
+            ) from exc
+
+        self.device = device
+        self.model = chexpertzero.CheXpertZero.from_pretrained(checkpoint).to(device).eval()
+
+    @torch.no_grad()
+    def encode_images(self, images: torch.Tensor) -> torch.Tensor:
+        return self.model.encode_images(images.to(self.device)).cpu()
+
+    @torch.no_grad()
+    def encode_texts(self, texts: list) -> torch.Tensor:
+        return self.model.encode_texts(texts).cpu()
 
 
 class BackboneEncoder(nn.Module):
