@@ -268,6 +268,10 @@ def main():
     # Data
     parser.add_argument("--data_dir", type=str, required=True,
                         help="Path to CheXpert-v1.0-small directory")
+    parser.add_argument("--csv_path", type=str, default=None,
+                        help="Override the split CSV file instead of inferring from --data_dir")
+    parser.add_argument("--img_root", type=str, default=None,
+                        help="Root directory for images; defaults to the parent of --data_dir")
     parser.add_argument("--concepts", type=str, 
                         default="concepts/chexpert_concepts.json",
                         help="Path to concepts file (JSON or TXT)")
@@ -362,12 +366,15 @@ def main():
     # =========================================
     print("\nLoading CheXpert dataset...")
     
-    if args.split == "train":
-        csv_path = os.path.join(args.data_dir, "train.csv")
+    if args.csv_path:
+        csv_path = args.csv_path
     else:
-        csv_path = os.path.join(args.data_dir, "valid.csv")
-    
-    img_root = os.path.dirname(args.data_dir)
+        if args.split == "train":
+            csv_path = os.path.join(args.data_dir, "train.csv")
+        else:
+            csv_path = os.path.join(args.data_dir, "valid.csv")
+
+    img_root = args.img_root if args.img_root is not None else os.path.dirname(args.data_dir)
     transform = get_transforms(224, is_training=False)
     
     dataset = CheXpertDataset(
