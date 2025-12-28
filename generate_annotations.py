@@ -302,6 +302,8 @@ def main():
                         default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--workers", type=int, default=4,
                         help="Number of parallel annotation workers")
+    parser.add_argument("--use_two_gpus", action="store_true",
+                        help="Wrap ChEX model with DataParallel across two GPUs")
     
     # ChEX model
     parser.add_argument("--model_name", type=str, default="chex_stage3",
@@ -321,8 +323,24 @@ def main():
     print(f"Concepts file: {args.concepts}")
     print(f"Output directory: {args.output_dir}")
     print(f"Threshold: {args.threshold}")
-    print(f"Device: {args.device}")
-    
+
+    primary_device = torch.device(args.device)
+    multi_gpu_devices = None
+    if args.use_two_gpus:
+        if torch.cuda.is_available():
+            available = torch.cuda.device_count()
+            if available >= 2:
+                multi_gpu_devices = list(range(min(available, 2)))
+                primary_device = torch.device(f"cuda:{multi_gpu_devices[0]}")
+                print(f"Using GPUs {multi_gpu_devices} for inference.")
+            else:
+                print(f"WARNING: requested 2 GPUs but only {available} available; falling back to {primary_device}.")
+        else:
+            print("WARNING: requested multi-GPU inference but CUDA is not available.")
+
+    primary_device_str = str(primary_device)
+    print(f"Running inference on {primary_device_str}")
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -428,11 +446,13 @@ def main():
         load_best=False,
         return_dict=True
     )
-    chex_model = chex_model.to(args.device)
+    if multi_gpu_devices:
+        chex_model = torch.nn.DataParallel(chex_model, device_ids=multi_gpu_devices)
+    chex_model = chex_model.to(primary_device)
     chex_model.eval()
     
     os.chdir(original_dir)
-    print(f"ChEX model loaded on {args.device}")
+    print(f"ChEX model loaded on {primary_device_str}")
     
     # =========================================
     # Precompute concept text features
@@ -445,12 +465,13 @@ def main():
         try:
             with torch.no_grad():
                 cached_data = torch.load(concept_features_path, map_location="cpu")
+
             if (
                 cached_data.get("concepts") == concepts and
                 cached_data.get("model") == args.model_name and
                 cached_data.get("run_name") == args.run_name
             ):
-                concept_features = cached_data["features"].to(args.device)
+                concept_features = cached_data["features"].to(primary_device)
                 concept_features_cached = True
                 print("\nLoaded cached concept text encodings.")
             else:
@@ -474,7 +495,7 @@ def main():
             "run_name": args.run_name,
         }, concept_features_path)
 
-        concept_features = concept_features.to(args.device)
+        concept_features = concept_features.to(primary_device)
 
     # =========================================
     # Generate annotations
@@ -513,7 +534,7 @@ def main():
         dataset=dataset,
         model=chex_model,
         concepts=concepts,
-        device=args.device,
+        device=primary_device_str,
         threshold=args.threshold,
         concept_batch_size=args.concept_batch_size,
         concept_features=concept_features,
