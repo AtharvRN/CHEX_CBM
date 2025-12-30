@@ -92,6 +92,8 @@ def parse_args():
     parser.add_argument("--annotation_workers", type=int, default=0,
                         help="Thread count for reading annotation JSON files")
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--use_data_parallel", action="store_true",
+                        help="Wrap the CBM model with DataParallel when multiple GPUs are available")
     parser.add_argument("--concept_cache", type=str, default=None,
                         help="Path to precomputed annotation cache for training")
     parser.add_argument("--val_concept_cache", type=str, default=None,

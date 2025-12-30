@@ -71,6 +71,11 @@ def _save_interpretations(labels, concepts, W, output_dir: str) -> None:
     _save_metrics(interpretations, os.path.join(output_dir, "interpretations.json"))
 
 
+def _unwrap_model(model):
+    """Return the underlying module if DataParallel was used."""
+    return model.module if isinstance(model, torch.nn.DataParallel) else model
+
+
 def _load_backbone(args, labels, device):
     use_xrv_backbone = args.backbone in XRV_WEIGHTS
     backbone_kwargs = {}
@@ -119,6 +124,18 @@ def main():
 
     os.makedirs(args.output, exist_ok=True)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    dp_device_ids = None
+    multi_gpu = False
+    if args.use_data_parallel and device.type == "cuda":
+        available = torch.cuda.device_count()
+        if available > 1:
+            dp_device_ids = list(range(available))
+            primary_device = torch.device(f"cuda:{dp_device_ids[0]}")
+            device = primary_device
+            multi_gpu = True
+            print(f"Using DataParallel across GPUs {dp_device_ids}")
+        else:
+            print("Warning: --use_data_parallel requested but only one CUDA device is available.")
     print(f"Using device: {device}")
 
     torch.manual_seed(args.seed)
@@ -283,12 +300,14 @@ def main():
         num_hidden=args.cbl_hidden_layers
     )
     model = BackboneWithConcepts(backbone, concept_layer)
+    model = model.to(device)
+    if multi_gpu:
+        model = torch.nn.DataParallel(model, device_ids=dp_device_ids)
 
     if args.resume_concept_layer:
         print(f"\nLoading concept bottleneck layer from {args.resume_concept_layer}...")
         state = torch.load(args.resume_concept_layer, map_location=device)
-        model.concept_layer.load_state_dict(state)
-        model = model.to(device)
+        _unwrap_model(model).concept_layer.load_state_dict(state)
     else:
         print("\nTraining concept bottleneck layer...")
         model = train_concept_layer(
@@ -299,7 +318,7 @@ def main():
         )
         print("\nSaving concept bottleneck checkpoint...")
         save_concept_artifacts(
-            model, concepts, args.output,
+            _unwrap_model(model), concepts, args.output,
             save_backbone=args.cbl_finetune_backbone
         )
 
@@ -345,7 +364,7 @@ def main():
 
     print("\nSaving...")
     save_concept_artifacts(
-        model, concepts, args.output,
+        _unwrap_model(model), concepts, args.output,
         save_backbone=args.cbl_finetune_backbone
     )
     torch.save(W, os.path.join(args.output, "W_g.pt"))
