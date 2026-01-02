@@ -6,13 +6,20 @@ AVAILABLE_BACKBONES = ["densenet121", "resnet50"] + list(XRV_WEIGHTS.keys())
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="VLG-CBM for CheXpert")
+    parser = argparse.ArgumentParser(description="VLG-CBM for CheXpert/COVID-QU")
     # Data
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="Path to CheXpert-v1.0-small directory")
+                        help="Path to data directory containing train.csv/valid.csv")
     parser.add_argument("--concepts", type=str,
                         default="concepts/chexpert_concepts.json",
                         help="Path to concepts file (JSON or TXT)")
+    parser.add_argument(
+        "--label_set",
+        type=str,
+        default="chexpert",
+        choices=["chexpert", "covidqu"],
+        help="Label set to use (chexpert or covidqu)"
+    )
     parser.add_argument(
         "--annotation_dir",
         type=str,

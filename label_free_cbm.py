@@ -40,6 +40,7 @@ from dataset import (
     CheXpertDataset,
     CHEXPERT_PATHOLOGY_LABELS,
     CHEXPERT_COMPETITION_LABELS,
+    COVIDQU_LABELS,
     get_transforms
 )
 from models import get_model
@@ -72,13 +73,16 @@ def sanitize_tag(tag: str) -> str:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Label-Free CBM for CheXpert")
+    parser = argparse.ArgumentParser(description="Label-Free CBM (CheXpert / COVID-QU)")
     
     # Data
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="Path to CheXpert-v1.0-small directory")
+                        help="Path to data directory containing train.csv/valid.csv")
     parser.add_argument("--concepts", type=str, default="concepts/chexpert_concepts.txt",
                         help="Path to concept set file (one concept per line)")
+    parser.add_argument("--label_set", type=str, default="chexpert",
+                        choices=["chexpert", "covidqu"],
+                        help="Label set to use (chexpert or covidqu)")
     parser.add_argument("--competition_labels", action="store_true",
                         help="Use only 5 competition labels")
     parser.add_argument("--uncertain_strategy", type=str, default="ones",
@@ -125,6 +129,8 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--use_data_parallel", action="store_true",
+                        help="Use DataParallel for backbone feature extraction when multiple GPUs are available")
     
     # Caching
     parser.add_argument("--activation_dir", type=str, default="saved_activations",
@@ -262,9 +268,10 @@ class CheXpertZeroEncoder:
 class BackboneEncoder(nn.Module):
     """Wrapper for backbone model feature extraction."""
     
-    def __init__(self, model_name: str, checkpoint: str = None, device: str = "cuda"):
+    def __init__(self, model_name: str, checkpoint: str = None, device: str = "cuda", use_data_parallel: bool = False):
         super().__init__()
-        self.device = device
+        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.use_data_parallel = use_data_parallel
         
         # Get the model without the final classifier
         self.model = get_model(model_name, num_classes=1, pretrained=True)
@@ -286,35 +293,56 @@ class BackboneEncoder(nn.Module):
                 filtered[k] = v
             self.model.load_state_dict(filtered, strict=False)
         
-        self.model = self.model.to(device).eval()
+        self.model = self.model.to(self.device).eval()
         
         # Get feature dimension
         if model_name == "densenet121":
             self.feature_dim = 1024
         else:  # resnet50
             self.feature_dim = 2048
+
+        class FeatureExtractor(nn.Module):
+            def __init__(self, backbone, model_name):
+                super().__init__()
+                self.backbone = backbone
+                self.model_name = model_name
+
+            def forward(self, x):
+                if hasattr(self.backbone, 'features'):
+                    # DenseNet
+                    features = self.backbone.features(x)
+                    features = F.relu(features, inplace=True)
+                    features = F.adaptive_avg_pool2d(features, (1, 1))
+                else:
+                    # ResNet - extract before final layer
+                    x = self.backbone.conv1(x)
+                    x = self.backbone.bn1(x)
+                    x = self.backbone.relu(x)
+                    x = self.backbone.maxpool(x)
+                    x = self.backbone.layer1(x)
+                    x = self.backbone.layer2(x)
+                    x = self.backbone.layer3(x)
+                    x = self.backbone.layer4(x)
+                    features = self.backbone.avgpool(x)
+                return features.view(features.size(0), -1)
+
+        self.feature_extractor = FeatureExtractor(self.backbone, model_name).to(self.device)
+
+        if self.use_data_parallel and torch.cuda.is_available():
+            available = torch.cuda.device_count()
+            if available > 1:
+                device_ids = list(range(available))
+                self.feature_extractor = nn.DataParallel(self.feature_extractor, device_ids=device_ids)
+                print(f"Using DataParallel for backbone across GPUs {device_ids}")
+            else:
+                print("Warning: --use_data_parallel requested but only one CUDA device is available.")
     
     @torch.no_grad()
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.to(self.device)
-        backbone = self.backbone
-        if hasattr(backbone, 'features'):
-            # DenseNet
-            features = backbone.features(x)
-            features = F.relu(features, inplace=True)
-            features = F.adaptive_avg_pool2d(features, (1, 1))
-        else:
-            # ResNet - extract before final layer
-            x = backbone.conv1(x)
-            x = backbone.bn1(x)
-            x = backbone.relu(x)
-            x = backbone.maxpool(x)
-            x = backbone.layer1(x)
-            x = backbone.layer2(x)
-            x = backbone.layer3(x)
-            x = backbone.layer4(x)
-            features = backbone.avgpool(x)
-        return features.view(features.size(0), -1).cpu()
+        target_device = x.device if x.is_cuda else self.device
+        x = x.to(target_device, non_blocking=True)
+        features = self.feature_extractor(x)
+        return features.cpu()
 
 
 def compute_and_cache_activations(
@@ -409,10 +437,12 @@ def train_projection_layer(
     best_val_loss = float('inf')
     best_weights = proj_layer.weight.clone()
     best_step = 0
+    last_train_loss = None
+    last_val_loss = None
     
     batch_size = min(proj_batch_size, len(backbone_features))
-    
-    for step in range(proj_steps):
+    pbar = tqdm(range(proj_steps), desc="Training projection", dynamic_ncols=True)
+    for step in pbar:
         batch_idx = torch.LongTensor(random.sample(indices, batch_size))
         
         proj_out = proj_layer(backbone_features[batch_idx].to(device))
@@ -420,6 +450,7 @@ def train_projection_layer(
         
         # Loss: negative cubed cosine similarity
         loss = -cos_similarity_cubed(proj_out.T, target.T).mean()
+        last_train_loss = loss.item()
         
         optimizer.zero_grad()
         loss.backward()
@@ -430,18 +461,20 @@ def train_projection_layer(
             with torch.no_grad():
                 val_out = proj_layer(val_backbone_features.to(device))
                 val_loss = -cos_similarity_cubed(val_out.T, val_clip_features.to(device).T).mean()
+                last_val_loss = val_loss.item()
             
             if step == 0 or val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_weights = proj_layer.weight.clone()
                 best_step = step
-                
-            if step % 100 == 0:
-                print(f"Step {step}: train_sim={-loss.item():.4f}, val_sim={-val_loss.item():.4f}")
             
             # Early stopping
             if step > 0 and val_loss > best_val_loss:
+                pbar.set_postfix(train_loss=last_train_loss, val_loss=last_val_loss)
                 break
+        
+        pbar.set_postfix(train_loss=last_train_loss, val_loss=last_val_loss if last_val_loss is not None else "N/A")
+    pbar.close()
     
     proj_layer.load_state_dict({"weight": best_weights})
     print(f"Best step: {best_step}, val_similarity: {-best_val_loss.item():.4f}")
@@ -488,7 +521,12 @@ def main():
     random.seed(args.seed)
     
     # Select labels
-    if args.competition_labels:
+    if args.label_set == "covidqu":
+        labels = COVIDQU_LABELS
+        print("Using 3 COVID-QU labels")
+        if args.competition_labels:
+            print("Note: --competition_labels ignored when --label_set covidqu")
+    elif args.competition_labels:
         labels = CHEXPERT_COMPETITION_LABELS
         print("Using 5 competition labels")
     else:
@@ -561,7 +599,12 @@ def main():
     print("\nLoading models...")
     
     # Backbone
-    backbone = BackboneEncoder(args.backbone, args.backbone_ckpt, device)
+    backbone = BackboneEncoder(
+        args.backbone,
+        args.backbone_ckpt,
+        device,
+        use_data_parallel=args.use_data_parallel
+    )
     print(f"Backbone: {args.backbone}, feature_dim={backbone.feature_dim}")
     
     # CLIP encoder

@@ -56,6 +56,13 @@ CHEXPERT_PATHOLOGY_LABELS = [
     "Fracture"
 ]
 
+# COVID-QU three-class labels
+COVIDQU_LABELS = [
+    "COVID-19",
+    "Non-COVID",
+    "Normal"
+]
+
 
 class CheXpertDataset(Dataset):
     """

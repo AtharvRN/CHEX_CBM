@@ -26,6 +26,7 @@ from dataset import (
     CheXpertDataset,
     CHEXPERT_COMPETITION_LABELS,
     CHEXPERT_PATHOLOGY_LABELS,
+    COVIDQU_LABELS,
     get_transforms
 )
 from models import get_model, XRV_WEIGHTS
@@ -142,12 +143,17 @@ def main():
     np.random.seed(args.seed)
     random.seed(args.seed)
 
-    if args.competition_labels:
+    if getattr(args, "label_set", "chexpert") == "covidqu":
+        labels = COVIDQU_LABELS
+        print("Using 3 COVID-QU labels")
+        if args.competition_labels:
+            print("Note: --competition_labels ignored when --label_set covidqu")
+    elif args.competition_labels:
         labels = CHEXPERT_COMPETITION_LABELS
     else:
         labels = CHEXPERT_PATHOLOGY_LABELS
     num_classes = len(labels)
-    print(f"Using {num_classes} pathology labels")
+    print(f"Using {num_classes} labels")
 
     _, concepts = load_concepts(args.concepts)
     print(f"Loaded {len(concepts)} concepts")
