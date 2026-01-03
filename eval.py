@@ -39,9 +39,9 @@ from models import get_model
 from train import plot_per_class_auroc
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate CheXpert/COVID-QU model")
+    parser = argparse.ArgumentParser(description="Unified evaluator for CheXpert (multilabel) and COVID-QU (3-class)")
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="Directory containing train.csv/valid.csv (CheXpert or COVID-QU)")
+                        help="Directory containing train.csv/valid.csv/test.csv (CheXpert or COVID-QU)")
     parser.add_argument("--label_set", type=str, default="chexpert",
                         choices=["chexpert", "covidqu"],
                         help="Label set to use")
@@ -56,6 +56,11 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--output", type=str, required=True)
+    parser.add_argument("--split", type=str, default="valid",
+                        choices=["train", "valid", "test"],
+                        help="Dataset split to evaluate (default: valid)")
+    parser.add_argument("--csv_path", type=str, default=None,
+                        help="Optional explicit CSV path (overrides --split)")
     parser.add_argument(
         "--nec_metrics",
         type=str,
@@ -145,10 +150,10 @@ def main():
     single_label = args.label_set == "covidqu"
 
     # Load validation set
-    val_csv = os.path.join(args.data_dir, "valid.csv")
+    csv_path = args.csv_path or os.path.join(args.data_dir, f"{args.split}.csv")
     img_root = os.path.dirname(args.data_dir)
     transform = get_transforms(args.img_size, is_training=False)
-    val_dataset = CheXpertDataset(val_csv, img_root, labels=labels, transform=transform, frontal_only=True)
+    val_dataset = CheXpertDataset(csv_path, img_root, labels=labels, transform=transform, frontal_only=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # Model
@@ -193,7 +198,8 @@ def main():
 
     # Metrics
     metrics = compute_metrics(all_targets, all_preds, labels, single_label)
-    print("\nValidation metrics:")
+    print(f"\nEvaluation split: {csv_path}")
+    print("\nMetrics:")
     if single_label:
         print(f"  Accuracy: {metrics['accuracy']:.4f}")
     else:
@@ -203,9 +209,10 @@ def main():
         print(f"  Mean AP:    {metrics['ap']['mean']:.4f}")
 
     # Save
-    np.save(os.path.join(args.output, "val_predictions.npy"), all_preds)
-    np.save(os.path.join(args.output, "val_targets.npy"), all_targets)
-    with open(os.path.join(args.output, "metrics.json"), "w") as f:
+    prefix = args.split if args.csv_path is None else "custom"
+    np.save(os.path.join(args.output, f"{prefix}_predictions.npy"), all_preds)
+    np.save(os.path.join(args.output, f"{prefix}_targets.npy"), all_targets)
+    with open(os.path.join(args.output, f"{prefix}_metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 
     if not single_label:

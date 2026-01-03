@@ -530,8 +530,8 @@ def main():
     with open(os.path.join(args.output, "history.json"), 'w') as f:
         json.dump(history, f, indent=2)
     
-    # Generate final plots
-    if args.save_plots:
+    # Generate final plots (multilabel only)
+    if args.save_plots and not args.single_label:
         print("\nGenerating final plots...")
         
         # Training curves
