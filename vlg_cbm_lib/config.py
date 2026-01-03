@@ -21,6 +21,13 @@ def parse_args():
         help="Label set to use (chexpert or covidqu)"
     )
     parser.add_argument(
+        "--covidqu_variant",
+        type=str,
+        default="infection",
+        choices=["infection", "lung"],
+        help="COVID-QU variant when using folder-based loading"
+    )
+    parser.add_argument(
         "--annotation_dir",
         type=str,
         default="annotations/train_chex_stage3",

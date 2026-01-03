@@ -41,6 +41,7 @@ from dataset import (
     CHEXPERT_PATHOLOGY_LABELS,
     CHEXPERT_COMPETITION_LABELS,
     COVIDQU_LABELS,
+    CovidQUDataset,
     get_transforms
 )
 from models import get_model
@@ -83,6 +84,9 @@ def parse_args():
     parser.add_argument("--label_set", type=str, default="chexpert",
                         choices=["chexpert", "covidqu"],
                         help="Label set to use (chexpert or covidqu)")
+    parser.add_argument("--covidqu_variant", type=str, default="infection",
+                        choices=["infection", "lung"],
+                        help="COVID-QU variant to use when label_set=covidqu")
     parser.add_argument("--competition_labels", action="store_true",
                         help="Use only 5 competition labels")
     parser.add_argument("--uncertain_strategy", type=str, default="ones",
@@ -559,30 +563,45 @@ def main():
     
     transform = get_transforms(224, is_training=False)
     
-    train_dataset = CheXpertDataset(
-        csv_path=train_csv,
-        img_root=img_root,
-        transform=transform,
-        labels=labels,
-        uncertain_strategy=args.uncertain_strategy,
-        frontal_only=True
-    )
-    
-    val_dataset = CheXpertDataset(
-        csv_path=val_csv,
-        img_root=img_root,
-        transform=transform,
-        labels=labels,
-        uncertain_strategy=args.uncertain_strategy,
-        frontal_only=True
-    )
-    
-    # Limit samples if specified
-    if args.limit_samples is not None and args.limit_samples < len(train_dataset):
-        print(f"Limiting to {args.limit_samples} training samples")
-        rng = np.random.RandomState(args.seed)
-        indices = rng.permutation(len(train_dataset))[:args.limit_samples]
-        train_dataset = torch.utils.data.Subset(train_dataset, indices)
+    if args.label_set == "covidqu":
+        train_dataset = CovidQUDataset(
+            root=args.data_dir,
+            split="Train",
+            transform=transform,
+            variant=args.covidqu_variant
+        )
+        val_dataset = CovidQUDataset(
+            root=args.data_dir,
+            split="Val",
+            transform=transform,
+            variant=args.covidqu_variant
+        )
+        # No uncertain handling needed; dataset returns one-hot labels
+    else:
+        train_dataset = CheXpertDataset(
+            csv_path=train_csv,
+            img_root=img_root,
+            transform=transform,
+            labels=labels,
+            uncertain_strategy=args.uncertain_strategy,
+            frontal_only=True
+        )
+        
+        val_dataset = CheXpertDataset(
+            csv_path=val_csv,
+            img_root=img_root,
+            transform=transform,
+            labels=labels,
+            uncertain_strategy=args.uncertain_strategy,
+            frontal_only=True
+        )
+        
+        # Limit samples if specified
+        if args.limit_samples is not None and args.limit_samples < len(train_dataset):
+            print(f"Limiting to {args.limit_samples} training samples")
+            rng = np.random.RandomState(args.seed)
+            indices = rng.permutation(len(train_dataset))[:args.limit_samples]
+            train_dataset = torch.utils.data.Subset(train_dataset, indices)
     
     print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
     

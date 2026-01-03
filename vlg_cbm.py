@@ -27,6 +27,7 @@ from dataset import (
     CHEXPERT_COMPETITION_LABELS,
     CHEXPERT_PATHOLOGY_LABELS,
     COVIDQU_LABELS,
+    CovidQUDataset,
     get_transforms
 )
 from models import get_model, XRV_WEIGHTS
@@ -169,27 +170,42 @@ def main():
         json.dump(config, f, indent=2)
 
     print("\nLoading datasets...")
-    train_csv = os.path.join(args.data_dir, "train.csv")
-    val_csv = os.path.join(args.data_dir, "valid.csv")
-    img_root = os.path.dirname(args.data_dir)
     transform = get_transforms(224, is_training=False)
 
-    train_dataset = CheXpertDataset(
-        csv_path=train_csv,
-        img_root=img_root,
-        transform=transform,
-        labels=labels,
-        uncertain_strategy=args.uncertain_strategy,
-        frontal_only=True
-    )
-    val_dataset = CheXpertDataset(
-        csv_path=val_csv,
-        img_root=img_root,
-        transform=transform,
-        labels=labels,
-        uncertain_strategy=args.uncertain_strategy,
-        frontal_only=True
-    )
+    if getattr(args, "label_set", "chexpert") == "covidqu":
+        train_dataset = CovidQUDataset(
+            root=args.data_dir,
+            split="Train",
+            transform=transform,
+            variant=args.covidqu_variant
+        )
+        val_dataset = CovidQUDataset(
+            root=args.data_dir,
+            split="Val",
+            transform=transform,
+            variant=args.covidqu_variant
+        )
+    else:
+        train_csv = os.path.join(args.data_dir, "train.csv")
+        val_csv = os.path.join(args.data_dir, "valid.csv")
+        img_root = os.path.dirname(args.data_dir)
+
+        train_dataset = CheXpertDataset(
+            csv_path=train_csv,
+            img_root=img_root,
+            transform=transform,
+            labels=labels,
+            uncertain_strategy=args.uncertain_strategy,
+            frontal_only=True
+        )
+        val_dataset = CheXpertDataset(
+            csv_path=val_csv,
+            img_root=img_root,
+            transform=transform,
+            labels=labels,
+            uncertain_strategy=args.uncertain_strategy,
+            frontal_only=True
+        )
 
     classifier_val_loader = DataLoader(
         val_dataset,
