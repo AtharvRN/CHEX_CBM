@@ -52,6 +52,8 @@ def parse_args():
                         help="Dataset split to evaluate")
     parser.add_argument("--split_csv", type=str, default=None,
                         help="Optional CSV path to override the split default (CheXpert only)")
+    parser.add_argument("--eval_full", action="store_true",
+                        help="Also evaluate the full (untruncated) model before NEC sweeps")
     return parser.parse_args()
 
 
@@ -226,6 +228,12 @@ def compute_metrics(targets: np.ndarray, preds: np.ndarray, labels: List[str], s
     return metrics
 
 
+def softmax_np(logits: np.ndarray) -> np.ndarray:
+    logits = logits - logits.max(axis=1, keepdims=True)
+    exp_logits = np.exp(logits)
+    return exp_logits / exp_logits.sum(axis=1, keepdims=True)
+
+
 def truncate_weights(weight: torch.Tensor, nec: int):
     if nec >= weight.size(1):
         return weight
@@ -308,6 +316,17 @@ def main():
     target_np = targets.numpy()
 
     results = []
+
+    # Full (untruncated) evaluation
+    full_logits = np.matmul(concept_np, W_g.t().numpy()) + b_g.numpy()
+    if single_label:
+        full_probs = softmax_np(full_logits)
+        full_metrics = compute_metrics(target_np, full_probs, labels, single_label=True)
+        print(f"Full model: Accuracy={full_metrics['accuracy']:.4f}")
+    else:
+        full_probs = 1 / (1 + np.exp(-full_logits))
+        full_metrics = compute_metrics(target_np, full_probs, labels, single_label=False)
+        print(f"Full model: Mean AUROC={full_metrics['auroc']['mean']:.4f}, Mean AP={full_metrics['ap']['mean']:.4f}")
     for nec in args.nec_levels:
         truncated = truncate_weights(W_g, nec)
         logits = np.matmul(concept_np, truncated.t().numpy()) + b_g.numpy()
