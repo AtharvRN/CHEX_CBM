@@ -68,20 +68,21 @@ def load_concepts(
     concepts_path: str,
     subset_labels: Optional[List[str]] = None
 ) -> Tuple[Dict[str, List[str]], List[str]]:
-    """Load concepts from JSON or TXT file."""
+    """Load concepts from JSON (per-label) or TXT (flat list)."""
+    concepts_dict: Dict[str, List[str]] = {}
     if concepts_path.endswith('.json'):
         with open(concepts_path, 'r') as f:
             data = json.load(f)
-    
-    if "concepts" in data:
-        concepts_dict = data["concepts"]
+        concepts_dict = data["concepts"] if "concepts" in data else data
     else:
-        concepts_dict = data
+        with open(concepts_path, 'r') as f:
+            concepts_list = [line.strip() for line in f if line.strip()]
+        concepts_dict = {"all": concepts_list}
+    
     if subset_labels:
         concepts_dict = {
-            label: concepts_dict[label]
+            label: concepts_dict.get(label, [])
             for label in subset_labels
-            if label in concepts_dict
         }
 
     # Flatten to unique list
@@ -267,11 +268,17 @@ def main():
     
     # Data
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="Path to CheXpert-v1.0-small directory")
+                        help="Path to dataset root (CheXpert CSV-based or COVID-QU folders)")
     parser.add_argument("--csv_path", type=str, default=None,
-                        help="Override the split CSV file instead of inferring from --data_dir")
+                        help="Override the split CSV file (CheXpert only) instead of inferring from --data_dir")
     parser.add_argument("--img_root", type=str, default=None,
                         help="Root directory for images; defaults to the parent of --data_dir")
+    parser.add_argument("--label_set", type=str, default="chexpert",
+                        choices=["chexpert", "covidqu"],
+                        help="Dataset label set")
+    parser.add_argument("--covidqu_variant", type=str, default="infection",
+                        choices=["infection", "lung"],
+                        help="COVID-QU variant when using folder-based loading")
     parser.add_argument("--concepts", type=str, 
                         default="concepts/chexpert_concepts.json",
                         help="Path to concepts file (JSON or TXT)")
@@ -280,7 +287,7 @@ def main():
                         help="Dataset split")
     parser.add_argument("--concept_subset", type=str, default="pathology",
                         choices=["all", "pathology", "competition", "custom"],
-                        help="Subset of labels whose concepts should be used")
+                        help="Subset of labels whose concepts should be used (CheXpert only; ignored for TXT or COVID-QU)")
     parser.add_argument("--custom_concept_labels", type=str, default=None,
                         help="Comma-separated labels to use when concept_subset=custom")
     
@@ -317,7 +324,7 @@ def main():
     # Setup
     # =========================================
     print("="*60)
-    print("VLG-CBM Annotation Generation for CheXpert")
+    print("VLG-CBM Annotation Generation")
     print("="*60)
     print(f"Data directory: {args.data_dir}")
     print(f"Concepts file: {args.concepts}")
@@ -353,6 +360,8 @@ def main():
         CheXpertDataset,
         CHEXPERT_PATHOLOGY_LABELS,
         CHEXPERT_COMPETITION_LABELS,
+        COVIDQU_LABELS,
+        CovidQUDataset,
         get_transforms,
     )
 
@@ -360,16 +369,17 @@ def main():
         parser.error("--custom_concept_labels is required when using concept_subset=custom")
 
     subset_labels = None
-    if args.concept_subset == "pathology":
-        subset_labels = CHEXPERT_PATHOLOGY_LABELS
-    elif args.concept_subset == "competition":
-        subset_labels = CHEXPERT_COMPETITION_LABELS
-    elif args.concept_subset == "custom":
-        subset_labels = [
-            label.strip()
-            for label in args.custom_concept_labels.split(",")
-            if label.strip()
-        ]
+    if args.label_set == "chexpert":
+        if args.concept_subset == "pathology":
+            subset_labels = CHEXPERT_PATHOLOGY_LABELS
+        elif args.concept_subset == "competition":
+            subset_labels = CHEXPERT_COMPETITION_LABELS
+        elif args.concept_subset == "custom":
+            subset_labels = [
+                label.strip()
+                for label in (args.custom_concept_labels or "").split(",")
+                if label.strip()
+            ]
 
     # =========================================
     # Load concepts
@@ -382,27 +392,35 @@ def main():
     # =========================================
     # Load dataset
     # =========================================
-    print("\nLoading CheXpert dataset...")
-    
-    if args.csv_path:
-        csv_path = args.csv_path
-    else:
-        if args.split == "train":
-            csv_path = os.path.join(args.data_dir, "train.csv")
-        else:
-            csv_path = os.path.join(args.data_dir, "valid.csv")
+    print("\nLoading dataset...")
 
-    img_root = args.img_root if args.img_root is not None else os.path.dirname(args.data_dir)
     transform = get_transforms(224, is_training=False)
-    
-    dataset = CheXpertDataset(
-        csv_path=csv_path,
-        img_root=img_root,
-        transform=transform,
-        labels=CHEXPERT_PATHOLOGY_LABELS,
-        uncertain_strategy="ones",
-        frontal_only=True
-    )
+
+    if args.label_set == "covidqu":
+        dataset = CovidQUDataset(
+            root=args.data_dir,
+            split="Train" if args.split == "train" else "Val",
+            transform=transform,
+            variant=args.covidqu_variant
+        )
+    else:
+        if args.csv_path:
+            csv_path = args.csv_path
+        else:
+            if args.split == "train":
+                csv_path = os.path.join(args.data_dir, "train.csv")
+            else:
+                csv_path = os.path.join(args.data_dir, "valid.csv")
+
+        img_root = args.img_root if args.img_root is not None else os.path.dirname(args.data_dir)
+        dataset = CheXpertDataset(
+            csv_path=csv_path,
+            img_root=img_root,
+            transform=transform,
+            labels=CHEXPERT_PATHOLOGY_LABELS,
+            uncertain_strategy="ones",
+            frontal_only=True
+        )
     
     # Limit samples
     n_images = len(dataset)
