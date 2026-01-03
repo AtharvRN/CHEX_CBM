@@ -54,6 +54,12 @@ def parse_args():
                         help="Optional CSV path to override the split default (CheXpert only)")
     parser.add_argument("--eval_full", action="store_true",
                         help="Also evaluate the full (untruncated) model before NEC sweeps")
+    parser.add_argument("--label_set", type=str, default=None,
+                        choices=["chexpert", "covidqu"],
+                        help="Override label set from config (optional)")
+    parser.add_argument("--covidqu_variant", type=str, default=None,
+                        choices=["infection", "lung"],
+                        help="Override COVID-QU variant from config (optional)")
     return parser.parse_args()
 
 
@@ -256,6 +262,10 @@ def main():
         config["output"] = model_dir
     if args.data_dir:
         config["data_dir"] = args.data_dir
+    if args.label_set:
+        config["label_set"] = args.label_set
+    if args.covidqu_variant:
+        config["covidqu_variant"] = args.covidqu_variant
 
     with open(os.path.join(model_dir, "concepts.txt"), "r") as f:
         concepts = [line.strip() for line in f.readlines() if line.strip()]

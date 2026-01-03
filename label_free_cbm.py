@@ -724,10 +724,15 @@ def main():
     # Compute activations
     # =========================================
     # Include clip model to keep caches for BiomedCLIP vs XrayCLIP separate
-    cache_tag = "chexpert_{}_{}_{}".format(
-        sanitize_tag(args.backbone),
-        sanitize_tag(args.clip_name),
-        len(train_dataset)
+    variant_tag = args.covidqu_variant if args.label_set == "covidqu" else "chexpert"
+    ckpt_tag = sanitize_tag(os.path.basename(args.backbone_ckpt)) if args.backbone_ckpt else "nopretrain"
+    cache_tag = "lfcbm_{labelset}_{variant}_{backbone}_{clip}_{ckpt}_{nsamples}".format(
+        labelset=sanitize_tag(args.label_set),
+        variant=sanitize_tag(variant_tag),
+        backbone=sanitize_tag(args.backbone),
+        clip=sanitize_tag(args.clip_name),
+        ckpt=ckpt_tag,
+        nsamples=len(train_dataset)
     )
     cache_base = os.path.join(args.activation_dir, cache_tag)
     
