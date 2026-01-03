@@ -33,6 +33,7 @@ from dataset import (
     CHEXPERT_COMPETITION_LABELS,
     CHEXPERT_PATHOLOGY_LABELS,
     COVIDQU_LABELS,
+    CovidQUDataset,
     get_transforms
 )
 from models import get_model
@@ -45,6 +46,9 @@ def parse_args():
     parser.add_argument("--label_set", type=str, default="chexpert",
                         choices=["chexpert", "covidqu"],
                         help="Label set to use")
+    parser.add_argument("--covidqu_variant", type=str, default="infection",
+                        choices=["infection", "lung"],
+                        help="COVID-QU variant when using folder-based loading")
     parser.add_argument("--model", type=str, default="densenet121")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Path to model checkpoint (not needed for XRV pretrained head)")
@@ -149,11 +153,20 @@ def main():
     num_classes = len(labels)
     single_label = args.label_set == "covidqu"
 
-    # Load validation set
-    csv_path = args.csv_path or os.path.join(args.data_dir, f"{args.split}.csv")
-    img_root = os.path.dirname(args.data_dir)
+    # Load dataset (CSV for CheXpert; folder for COVID-QU unless csv_path is provided)
     transform = get_transforms(args.img_size, is_training=False)
-    val_dataset = CheXpertDataset(csv_path, img_root, labels=labels, transform=transform, frontal_only=True)
+    if single_label and args.csv_path is None:
+        val_dataset = CovidQUDataset(
+            root=args.data_dir,
+            split=args.split.capitalize() if args.split != "train" else "Train",
+            transform=transform,
+            variant=args.covidqu_variant
+        )
+        csv_path = f"[folder mode] {args.split}"
+    else:
+        csv_path = args.csv_path or os.path.join(args.data_dir, f"{args.split}.csv")
+        img_root = os.path.dirname(args.data_dir)
+        val_dataset = CheXpertDataset(csv_path, img_root, labels=labels, transform=transform, frontal_only=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     # Model

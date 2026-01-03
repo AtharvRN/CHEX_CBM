@@ -33,6 +33,7 @@ from dataset import (
     CHEXPERT_COMPETITION_LABELS,
     CHEXPERT_PATHOLOGY_LABELS,
     COVIDQU_LABELS,
+    CovidQUDataset,
     get_transforms
 )
 from models import get_model
@@ -57,6 +58,9 @@ def parse_args():
     parser.add_argument("--label_set", type=str, default="chexpert",
                         choices=["chexpert", "covidqu"],
                         help="Label set to use")
+    parser.add_argument("--covidqu_variant", type=str, default="infection",
+                        choices=["infection", "lung"],
+                        help="COVID-QU variant to use when label_set=covidqu")
     parser.add_argument("--competition_labels", action="store_true",
                         help="Use only 5 competition labels instead of all 14")
     parser.add_argument("--pathology_labels", action="store_true",
@@ -265,45 +269,54 @@ def main():
     
     num_classes = len(labels)
     
-    # Paths
-    train_csv = os.path.join(args.data_dir, "train.csv")
-    val_csv = os.path.join(args.data_dir, "valid.csv")
-    img_root = os.path.dirname(args.data_dir)  # Parent directory
-    
-    # Transforms
+    # Paths and datasets
+    print("\nLoading datasets...")
     train_transform = get_transforms(args.img_size, is_training=True)
     val_transform = get_transforms(args.img_size, is_training=False)
-    
-    # Datasets
-    print("\nLoading datasets...")
-    train_dataset = CheXpertDataset(
-        csv_path=train_csv,
-        img_root=img_root,
-        transform=train_transform,
-        labels=labels,
-        uncertain_strategy=args.uncertain_strategy,
-        frontal_only=args.frontal_only
-    )
-    
-    # Limit training samples if specified (for testing/debugging)
-    if args.limit_samples is not None and args.limit_samples < len(train_dataset):
-        print(f"Limiting training to {args.limit_samples} samples (seed={args.seed})")
-        # Use seeded random permutation for consistent subset
-        rng = np.random.RandomState(args.seed)
-        indices = rng.permutation(len(train_dataset))[:args.limit_samples]
-        train_dataset = torch.utils.data.Subset(train_dataset, indices)
-        # Recompute targets for the subset (for pos_weight calculation)
-        subset_targets = torch.stack([train_dataset.dataset.targets[i] for i in indices])
-        train_dataset.targets = subset_targets
-    
-    val_dataset = CheXpertDataset(
-        csv_path=val_csv,
-        img_root=img_root,
-        transform=val_transform,
-        labels=labels,
-        uncertain_strategy=args.uncertain_strategy,
-        frontal_only=args.frontal_only
-    )
+
+    if args.label_set == "covidqu":
+        train_dataset = CovidQUDataset(
+            root=args.data_dir,
+            split="Train",
+            transform=train_transform,
+            variant=args.covidqu_variant
+        )
+        val_dataset = CovidQUDataset(
+            root=args.data_dir,
+            split="Val",
+            transform=val_transform,
+            variant=args.covidqu_variant
+        )
+    else:
+        train_csv = os.path.join(args.data_dir, "train.csv")
+        val_csv = os.path.join(args.data_dir, "valid.csv")
+        img_root = os.path.dirname(args.data_dir)  # Parent directory
+
+        train_dataset = CheXpertDataset(
+            csv_path=train_csv,
+            img_root=img_root,
+            transform=train_transform,
+            labels=labels,
+            uncertain_strategy=args.uncertain_strategy,
+            frontal_only=args.frontal_only
+        )
+        # Limit training samples if specified (for testing/debugging)
+        if args.limit_samples is not None and args.limit_samples < len(train_dataset):
+            print(f"Limiting training to {args.limit_samples} samples (seed={args.seed})")
+            rng = np.random.RandomState(args.seed)
+            indices = rng.permutation(len(train_dataset))[:args.limit_samples]
+            train_dataset = torch.utils.data.Subset(train_dataset, indices)
+            subset_targets = torch.stack([train_dataset.dataset.targets[i] for i in indices])
+            train_dataset.targets = subset_targets
+
+        val_dataset = CheXpertDataset(
+            csv_path=val_csv,
+            img_root=img_root,
+            transform=val_transform,
+            labels=labels,
+            uncertain_strategy=args.uncertain_strategy,
+            frontal_only=args.frontal_only
+        )
     
     # DataLoaders
     train_loader = DataLoader(

@@ -64,6 +64,71 @@ COVIDQU_LABELS = [
 ]
 
 
+class CovidQUDataset(Dataset):
+    """
+    Simple folder-based dataset for COVID-QU (3-class classification).
+    Expects structure:
+      <root>/
+        Infection Segmentation Data/Infection Segmentation Data/<Split>/{COVID-19,Non-COVID,Normal}/images/*.png|jpg
+      or for the lung variant:
+        Lung Segmentation Data/Lung Segmentation Data/<Split>/{COVID-19,Non-COVID,Normal}/images/*.png|jpg
+    """
+
+    VARIANT_DIRS = {
+        "infection": os.path.join("Infection Segmentation Data", "Infection Segmentation Data"),
+        "lung": os.path.join("Lung Segmentation Data", "Lung Segmentation Data"),
+    }
+
+    def __init__(self, root: str, split: str, transform: Optional[Callable] = None, variant: str = "infection"):
+        if variant not in self.VARIANT_DIRS:
+            raise ValueError(f"Unknown variant '{variant}', expected one of {list(self.VARIANT_DIRS.keys())}")
+        self.root = root
+        self.split = split  # Train | Val | Test
+        self.transform = transform
+        self.variant = variant
+        self.samples = []
+        self.targets = []
+        self.label_to_idx = {name: i for i, name in enumerate(COVIDQU_LABELS)}
+        base_dir = os.path.join(root, self.VARIANT_DIRS[variant], split)
+
+        exts = {".png", ".jpg", ".jpeg", ".bmp"}
+        for cls in COVIDQU_LABELS:
+            img_dir = os.path.join(base_dir, cls, "images")
+            if not os.path.isdir(img_dir):
+                print(f"Warning: missing directory {img_dir}, skipping.")
+                continue
+            for fname in os.listdir(img_dir):
+                if fname.startswith("."):
+                    continue
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in exts:
+                    continue
+                path = os.path.join(img_dir, fname)
+                self.samples.append(path)
+                self.targets.append(self.label_to_idx[cls])
+
+        if len(self.samples) == 0:
+            raise RuntimeError(f"No images found for split {split} at {base_dir}")
+        print(f"Loaded {len(self.samples)} {split} samples from {base_dir}")
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        path = self.samples[idx]
+        label = self.targets[idx]
+        img = Image.open(path).convert("RGB")
+        if self.transform is not None:
+            img = self.transform(img)
+        # return one-hot vector to stay compatible with existing code paths
+        target_vec = torch.zeros(len(COVIDQU_LABELS), dtype=torch.float32)
+        target_vec[label] = 1.0
+        return img, target_vec
+
+    def get_image_path(self, idx: int) -> str:
+        return self.samples[idx]
+
+
 class CheXpertDataset(Dataset):
     """
     CheXpert Dataset for multi-label chest X-ray classification.
