@@ -49,7 +49,7 @@ from utils.wandb_utils import WANDB_AVAILABLE, init_wandb, log_plots_to_wandb, l
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train CheXpert/COVID-QU multi-label classifier")
+    parser = argparse.ArgumentParser(description="Train CheXpert/COVID-QU classifier")
     
     # Data
     parser.add_argument("--data_dir", type=str, required=True,
@@ -61,6 +61,9 @@ def parse_args():
                         help="Use only 5 competition labels instead of all 14")
     parser.add_argument("--pathology_labels", action="store_true",
                         help="Use 12 pathology labels (excludes 'No Finding' and 'Support Devices')")
+    parser.add_argument("--single_label", action="store_true",
+                        help="Treat labels as single-class (softmax) instead of multilabel (BCE). "
+                             "Automatically enabled for COVID-QU.")
     parser.add_argument("--uncertain_strategy", type=str, default="ones",
                         choices=["ones", "zeros", "ignore"],
                         help="How to handle uncertain labels (-1)")
@@ -118,10 +121,11 @@ def parse_args():
 
 
 def train_epoch(model, loader, criterion, optimizer, device):
-    """Train for one epoch."""
+    """Train for one epoch (supports single-label or multilabel)."""
     model.train()
     total_loss = 0.0
     num_samples = 0
+    correct = 0
     
     pbar = tqdm(loader, desc="Training")
     for images, labels in pbar:
@@ -130,18 +134,31 @@ def train_epoch(model, loader, criterion, optimizer, device):
         
         optimizer.zero_grad()
         logits = model(images)
-        loss = criterion(logits, labels)
+        if labels.ndim == 2 and labels.size(1) > 1 and labels.dtype.is_floating_point:
+            # multilabel
+            loss = criterion(logits, labels)
+        else:
+            # single-label (softmax)
+            if labels.ndim > 1:
+                labels = labels.argmax(dim=1)
+            loss = criterion(logits, labels)
+            preds = torch.softmax(logits, dim=1).argmax(dim=1)
+            correct += (preds == labels).sum().item()
         loss.backward()
         optimizer.step()
         
         total_loss += loss.item() * images.size(0)
         num_samples += images.size(0)
-        pbar.set_postfix({'loss': total_loss / num_samples})
+        postfix = {'loss': total_loss / num_samples}
+        if correct:
+            postfix['acc'] = correct / num_samples
+        pbar.set_postfix(postfix)
     
-    return total_loss / num_samples
+    acc = correct / num_samples if correct else None
+    return total_loss / num_samples, acc
 
 
-def evaluate(model, loader, device, label_names):
+def evaluate(model, loader, device, label_names, single_label: bool):
     """Evaluate model and compute metrics."""
     model.eval()
     all_logits = []
@@ -157,14 +174,18 @@ def evaluate(model, loader, device, label_names):
     logits = torch.cat(all_logits, dim=0)
     targets = torch.cat(all_targets, dim=0)
     
-    # Convert logits to probabilities
-    probs = torch.sigmoid(logits).numpy()
-    targets = targets.numpy()
-    
-    # Compute all metrics
-    metrics = compute_all_metrics(targets, probs, label_names)
-    
-    return metrics, targets, probs
+    if single_label:
+        probs = torch.softmax(logits, dim=1).numpy()
+        targets_np = targets.argmax(dim=1).numpy() if targets.ndim > 1 else targets.numpy()
+        preds = probs.argmax(axis=1)
+        acc = (preds == targets_np).mean()
+        metrics = {"accuracy": acc}
+        return metrics, targets_np, probs
+    else:
+        probs = torch.sigmoid(logits).numpy()
+        targets_np = targets.numpy()
+        metrics = compute_all_metrics(targets_np, probs, label_names)
+        return metrics, targets_np, probs
 
 
 def load_history(path):
@@ -177,9 +198,9 @@ def load_history(path):
     except (json.JSONDecodeError, OSError):
         print(f"Warning: failed to load history ({path}); starting fresh.")
         return [], 0.0
-    best_auroc = max(((entry.get('val_mean_auroc') or 0.0) for entry in history), default=0.0)
-    print(f"Loaded {len(history)} history entries, best AUROC so far {best_auroc:.4f}")
-    return history, best_auroc
+    best_metric = max(((entry.get('val_mean_auroc') or entry.get('val_acc') or 0.0) for entry in history), default=0.0)
+    print(f"Loaded {len(history)} history entries, best metric so far {best_metric:.4f}")
+    return history, best_metric
 
 
 def save_history(history, path):
@@ -231,6 +252,7 @@ def main():
         print("Using 3 COVID-QU labels")
         if args.competition_labels or args.pathology_labels:
             print("Note: competition/pathology label flags ignored for COVID-QU.")
+        args.single_label = True
     elif args.competition_labels:
         labels = CHEXPERT_COMPETITION_LABELS
         print("Using 5 competition labels")
@@ -333,20 +355,23 @@ def main():
         print("Backbone frozen, only training classifier")
     
     # Loss function
-    if args.use_pos_weight:
-        # Get targets - handle both Dataset and Subset
-        if hasattr(train_dataset, 'targets'):
-            targets = train_dataset.targets
-        else:
-            targets = train_dataset.dataset.targets
-        pos_counts = targets.sum(dim=0)
-        neg_counts = len(targets) - pos_counts
-        pos_counts = torch.clamp(pos_counts, min=1.0)
-        pos_weight = (neg_counts / pos_counts).to(device)
-        print(f"Using pos_weight: {pos_weight.tolist()}")
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    if args.single_label:
+        criterion = nn.CrossEntropyLoss()
     else:
-        criterion = nn.BCEWithLogitsLoss()
+        if args.use_pos_weight:
+            # Get targets - handle both Dataset and Subset
+            if hasattr(train_dataset, 'targets'):
+                targets = train_dataset.targets
+            else:
+                targets = train_dataset.dataset.targets
+            pos_counts = targets.sum(dim=0)
+            neg_counts = len(targets) - pos_counts
+            pos_counts = torch.clamp(pos_counts, min=1.0)
+            pos_weight = (neg_counts / pos_counts).to(device)
+            print(f"Using pos_weight: {pos_weight.tolist()}")
+            criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        else:
+            criterion = nn.BCEWithLogitsLoss()
     
     # Optimizer
     optimizer = AdamW(
@@ -396,28 +421,37 @@ def main():
     history_path = os.path.join(args.output, "history.json")
     history, best_auroc = load_history(history_path)
     print("\nEvaluating initial model...")
-    metrics, val_targets, val_preds = evaluate(model, val_loader, device, labels)
-    initial_aurocs = metrics['auroc']
-    initial_aps = metrics['ap']
-    mean_auroc = initial_aurocs['mean']
-    mean_ap = initial_aps['mean']
-    print(f"Initial Val Mean AUROC: {mean_auroc:.4f} | Mean AP: {mean_ap:.4f}")
-    print("Per-class AUROC:")
-    for label in labels:
-        print(f"  {label}: AUROC={initial_aurocs[label]:.4f}, AP={initial_aps[label]:.4f}")
+    metrics, val_targets, val_preds = evaluate(model, val_loader, device, labels, args.single_label)
+    if args.single_label:
+        print(f"Initial Val Accuracy: {metrics['accuracy']:.4f}")
+        best_metric = metrics['accuracy']
+    else:
+        initial_aurocs = metrics['auroc']
+        initial_aps = metrics['ap']
+        mean_auroc = initial_aurocs['mean']
+        mean_ap = initial_aps['mean']
+        print(f"Initial Val Mean AUROC: {mean_auroc:.4f} | Mean AP: {mean_ap:.4f}")
+        print("Per-class AUROC:")
+        for label in labels:
+            print(f"  {label}: AUROC={initial_aurocs[label]:.4f}, AP={initial_aps[label]:.4f}")
+        best_metric = mean_auroc
+    best_auroc = max(best_auroc, best_metric)
     for epoch in range(1, args.epochs + 1):
         print(f"\nEpoch {epoch}/{args.epochs}")
         print("-" * 40)
         
         # Train
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
         
         # Evaluate
-        metrics, val_targets, val_preds = evaluate(model, val_loader, device, labels)
-        val_aurocs = metrics['auroc']
-        val_aps = metrics['ap']
-        mean_auroc = val_aurocs['mean']
-        mean_ap = val_aps['mean']
+        metrics, val_targets, val_preds = evaluate(model, val_loader, device, labels, args.single_label)
+        if args.single_label:
+            val_acc = metrics['accuracy']
+        else:
+            val_aurocs = metrics['auroc']
+            val_aps = metrics['ap']
+            mean_auroc = val_aurocs['mean']
+            mean_ap = val_aps['mean']
         
         # Update scheduler
         current_lr = optimizer.param_groups[0]['lr']
@@ -425,35 +459,50 @@ def main():
         
         # Log
         print(f"Train Loss: {train_loss:.4f}")
-        print(f"Val Mean AUROC: {mean_auroc:.4f} | Mean AP: {mean_ap:.4f}")
-        print("Per-class AUROC:")
-        for label in labels:
-            print(f"  {label}: AUROC={val_aurocs[label]:.4f}, AP={val_aps[label]:.4f}")
+        if train_acc is not None:
+            print(f"Train Acc:  {train_acc:.4f}")
+        if args.single_label:
+            print(f"Val   Acc:  {val_acc:.4f}")
+        else:
+            print(f"Val Mean AUROC: {mean_auroc:.4f} | Mean AP: {mean_ap:.4f}")
+            print("Per-class AUROC:")
+            for label in labels:
+                print(f"  {label}: AUROC={val_aurocs[label]:.4f}, AP={val_aps[label]:.4f}")
         
         # Save history
-        history.append({
-            'epoch': epoch,
-            'train_loss': train_loss,
-            'val_mean_auroc': mean_auroc,
-            'val_mean_ap': mean_ap,
-            'val_aurocs': val_aurocs,
-            'val_aps': val_aps,
-            'lr': current_lr
-        })
+        if args.single_label:
+            history.append({
+                'epoch': epoch,
+                'train_loss': train_loss,
+                'train_acc': train_acc,
+                'val_acc': val_acc,
+                'lr': current_lr
+            })
+        else:
+            history.append({
+                'epoch': epoch,
+                'train_loss': train_loss,
+                'val_mean_auroc': mean_auroc,
+                'val_mean_ap': mean_ap,
+                'val_aurocs': val_aurocs,
+                'val_aps': val_aps,
+                'lr': current_lr
+            })
         save_history(history, history_path)
         
         # Log to wandb
-        if WANDB_AVAILABLE and wandb_run:
+        if WANDB_AVAILABLE and wandb_run and not args.single_label:
             log_to_wandb(epoch, train_loss, val_aurocs, val_aps, current_lr, labels, best_auroc)
         
         # Generate plots periodically
-        if args.save_plots and epoch % args.plot_every == 0:
+        if args.save_plots and epoch % args.plot_every == 0 and not args.single_label:
             plot_training_curves(history, plots_dir)
             plot_per_class_auroc(val_aurocs, labels, plots_dir, epoch)
         
         # Save best model
-        if mean_auroc > best_auroc:
-            best_auroc = mean_auroc
+        metric_to_track = val_acc if args.single_label else mean_auroc
+        if metric_to_track > best_auroc:
+            best_auroc = metric_to_track
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -461,7 +510,8 @@ def main():
                 'best_auroc': best_auroc,
                 'config': config
             }, os.path.join(args.output, "best_model.pth"))
-            print(f"*** New best model saved with AUROC: {best_auroc:.4f} ***")
+            tag = "Accuracy" if args.single_label else "AUROC"
+            print(f"*** New best model saved with {tag}: {best_auroc:.4f} ***")
             
             # Save best predictions
             np.save(os.path.join(args.output, "best_val_predictions.npy"), val_preds)
@@ -514,8 +564,8 @@ def main():
     # Finish wandb run
     if WANDB_AVAILABLE and wandb_run:
         # Log final summary
-        wandb.run.summary['best_auroc'] = best_auroc
-        wandb.run.summary['best_epoch'] = history[np.argmax([h['val_mean_auroc'] for h in history])]['epoch']
+        wandb.run.summary['best_metric'] = best_auroc
+        wandb.run.summary['best_epoch'] = history[np.argmax([h.get('val_mean_auroc', h.get('val_acc', 0)) for h in history])]['epoch']
         
         # Save model artifact
         artifact = wandb.Artifact(f'model-{wandb.run.id}', type='model')
@@ -525,10 +575,11 @@ def main():
         wandb.finish()
     
     print("\n" + "="*60)
-    print(f"Training complete!")
-    print(f"Best Val AUROC: {best_auroc:.4f}")
+    print("Training complete!")
+    tag = "Best Val Accuracy" if args.single_label else "Best Val AUROC"
+    print(f"{tag}: {best_auroc:.4f}")
     print(f"Checkpoints saved to: {args.output}")
-    if args.save_plots:
+    if args.save_plots and not args.single_label:
         print(f"Plots saved to: {plots_dir}")
     print("="*60)
 

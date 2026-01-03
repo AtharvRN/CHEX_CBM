@@ -32,14 +32,19 @@ from dataset import (
     CHEXPERT_LABELS,
     CHEXPERT_COMPETITION_LABELS,
     CHEXPERT_PATHOLOGY_LABELS,
+    COVIDQU_LABELS,
     get_transforms
 )
 from models import get_model
 from train import plot_per_class_auroc
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate CheXpert model")
-    parser.add_argument("--data_dir", type=str, required=True)
+    parser = argparse.ArgumentParser(description="Evaluate CheXpert/COVID-QU model")
+    parser.add_argument("--data_dir", type=str, required=True,
+                        help="Directory containing train.csv/valid.csv (CheXpert or COVID-QU)")
+    parser.add_argument("--label_set", type=str, default="chexpert",
+                        choices=["chexpert", "covidqu"],
+                        help="Label set to use")
     parser.add_argument("--model", type=str, default="densenet121")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Path to model checkpoint (not needed for XRV pretrained head)")
@@ -60,6 +65,10 @@ def parse_args():
     return parser.parse_args()
 
 def get_labels(args):
+    if args.label_set == "covidqu":
+        if args.competition_labels or args.pathology_labels:
+            print("Note: competition/pathology flags ignored for COVID-QU.")
+        return COVIDQU_LABELS
     if args.competition_labels:
         return CHEXPERT_COMPETITION_LABELS
     elif args.pathology_labels:
@@ -67,23 +76,29 @@ def get_labels(args):
     else:
         return CHEXPERT_LABELS
 
-def compute_metrics(targets, preds, labels):
+def compute_metrics(targets, preds, labels, single_label: bool):
     from sklearn.metrics import roc_auc_score, average_precision_score
-    metrics = {'auroc': {}, 'ap': {}}
-    valid_aurocs, valid_aps = [], []
-    for i, label in enumerate(labels):
-        y_true, y_pred = targets[:, i], preds[:, i]
-        if np.sum(y_true) == 0 or np.sum(y_true) == len(y_true):
-            metrics['auroc'][label] = float('nan')
-        else:
-            auc = roc_auc_score(y_true, y_pred)
-            metrics['auroc'][label] = auc
-            valid_aurocs.append(auc)
-        ap = average_precision_score(y_true, y_pred)
-        metrics['ap'][label] = ap
-        valid_aps.append(ap)
-    metrics['auroc']['mean'] = np.nanmean(valid_aurocs)
-    metrics['ap']['mean'] = np.nanmean(valid_aps)
+    if single_label:
+        preds_cls = preds.argmax(axis=1)
+        targets_cls = targets.argmax(axis=1) if targets.ndim > 1 else targets
+        acc = (preds_cls == targets_cls).mean()
+        metrics = {'accuracy': float(acc)}
+    else:
+        metrics = {'auroc': {}, 'ap': {}}
+        valid_aurocs, valid_aps = [], []
+        for i, label in enumerate(labels):
+            y_true, y_pred = targets[:, i], preds[:, i]
+            if np.sum(y_true) == 0 or np.sum(y_true) == len(y_true):
+                metrics['auroc'][label] = float('nan')
+            else:
+                auc = roc_auc_score(y_true, y_pred)
+                metrics['auroc'][label] = auc
+                valid_aurocs.append(auc)
+            ap = average_precision_score(y_true, y_pred)
+            metrics['ap'][label] = ap
+            valid_aps.append(ap)
+        metrics['auroc']['mean'] = np.nanmean(valid_aurocs)
+        metrics['ap']['mean'] = np.nanmean(valid_aps)
     return metrics
 
 
@@ -127,6 +142,7 @@ def main():
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     labels = get_labels(args)
     num_classes = len(labels)
+    single_label = args.label_set == "covidqu"
 
     # Load validation set
     val_csv = os.path.join(args.data_dir, "valid.csv")
@@ -166,19 +182,25 @@ def main():
         for images, labels_batch in tqdm(val_loader, desc="Evaluating", ncols=80):
             images = images.to(device)
             logits = model(images)
-            probs = torch.sigmoid(logits).cpu().numpy()
+            if single_label:
+                probs = torch.softmax(logits, dim=1).cpu().numpy()
+            else:
+                probs = torch.sigmoid(logits).cpu().numpy()
             all_preds.append(probs)
             all_targets.append(labels_batch.numpy())
     all_preds = np.concatenate(all_preds, axis=0)
     all_targets = np.concatenate(all_targets, axis=0)
 
     # Metrics
-    metrics = compute_metrics(all_targets, all_preds, labels)
+    metrics = compute_metrics(all_targets, all_preds, labels, single_label)
     print("\nValidation metrics:")
-    for k, v in metrics['auroc'].items():
-        print(f"  AUROC {k:25s}: {v:.4f}")
-    print(f"  Mean AUROC: {metrics['auroc']['mean']:.4f}")
-    print(f"  Mean AP:    {metrics['ap']['mean']:.4f}")
+    if single_label:
+        print(f"  Accuracy: {metrics['accuracy']:.4f}")
+    else:
+        for k, v in metrics['auroc'].items():
+            print(f"  AUROC {k:25s}: {v:.4f}")
+        print(f"  Mean AUROC: {metrics['auroc']['mean']:.4f}")
+        print(f"  Mean AP:    {metrics['ap']['mean']:.4f}")
 
     # Save
     np.save(os.path.join(args.output, "val_predictions.npy"), all_preds)
@@ -186,10 +208,11 @@ def main():
     with open(os.path.join(args.output, "metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
 
-    # Plot per-class AUROC
-    plots_dir = os.path.join(args.output, "plots")
-    os.makedirs(plots_dir, exist_ok=True)
-    plot_per_class_auroc(metrics['auroc'], labels, plots_dir)
+    if not single_label:
+        # Plot per-class AUROC
+        plots_dir = os.path.join(args.output, "plots")
+        os.makedirs(plots_dir, exist_ok=True)
+        plot_per_class_auroc(metrics['auroc'], labels, plots_dir)
 
     if args.nec_metrics:
         print_nec_table(args.nec_metrics)
