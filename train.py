@@ -32,6 +32,7 @@ from dataset import (
     CHEXPERT_LABELS, 
     CHEXPERT_COMPETITION_LABELS,
     CHEXPERT_PATHOLOGY_LABELS,
+    COVIDQU_LABELS,
     get_transforms
 )
 from models import get_model
@@ -48,11 +49,14 @@ from utils.wandb_utils import WANDB_AVAILABLE, init_wandb, log_plots_to_wandb, l
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train CheXpert multi-label classifier")
+    parser = argparse.ArgumentParser(description="Train CheXpert/COVID-QU multi-label classifier")
     
     # Data
     parser.add_argument("--data_dir", type=str, required=True,
-                        help="Path to CheXpert-v1.0-small directory")
+                        help="Path to data directory containing train.csv/valid.csv")
+    parser.add_argument("--label_set", type=str, default="chexpert",
+                        choices=["chexpert", "covidqu"],
+                        help="Label set to use")
     parser.add_argument("--competition_labels", action="store_true",
                         help="Use only 5 competition labels instead of all 14")
     parser.add_argument("--pathology_labels", action="store_true",
@@ -222,7 +226,12 @@ def main():
     print(f"Random seed: {args.seed}")
     
     # Select labels
-    if args.competition_labels:
+    if args.label_set == "covidqu":
+        labels = COVIDQU_LABELS
+        print("Using 3 COVID-QU labels")
+        if args.competition_labels or args.pathology_labels:
+            print("Note: competition/pathology label flags ignored for COVID-QU.")
+    elif args.competition_labels:
         labels = CHEXPERT_COMPETITION_LABELS
         print("Using 5 competition labels")
     elif args.pathology_labels:
