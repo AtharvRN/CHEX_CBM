@@ -23,7 +23,14 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataset import CheXpertDataset, get_transforms
+from dataset import (
+    CheXpertDataset,
+    CovidQUDataset,
+    CHEXPERT_COMPETITION_LABELS,
+    CHEXPERT_PATHOLOGY_LABELS,
+    COVIDQU_LABELS,
+    get_transforms,
+)
 from models import get_model, XRV_WEIGHTS
 
 
@@ -41,10 +48,10 @@ def parse_args():
     parser.add_argument("--data_dir", type=str, default=None,
                         help="Optional override for the dataset root (overrides config.json)")
     parser.add_argument("--split", type=str, default="valid",
-                        choices=["valid", "test"],
-                        help="Dataset split to evaluate (valid or test)")
+                        choices=["train", "valid", "test"],
+                        help="Dataset split to evaluate")
     parser.add_argument("--split_csv", type=str, default=None,
-                        help="Optional CSV path to override the split default")
+                        help="Optional CSV path to override the split default (CheXpert only)")
     return parser.parse_args()
 
 
@@ -139,6 +146,20 @@ class LinearConceptLayer(torch.nn.Module):
 
 def get_dataset(config, labels, split="valid", split_csv=None):
     data_dir = config["data_dir"]
+    transform = get_transforms(config.get("img_size", 224), is_training=False)
+    label_set = config.get("label_set", "chexpert")
+
+    if label_set == "covidqu":
+        split_folder = "Train" if split == "train" else "Val" if split == "valid" else "Test"
+        variant = config.get("covidqu_variant", "infection")
+        return CovidQUDataset(
+            root=data_dir,
+            split=split_folder,
+            transform=transform,
+            variant=variant
+        )
+
+    # CheXpert CSV mode
     if split_csv:
         csv_path = split_csv
     else:
@@ -146,7 +167,6 @@ def get_dataset(config, labels, split="valid", split_csv=None):
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"CSV for split '{split}' not found at {csv_path}")
     img_root = os.path.dirname(data_dir)
-    transform = get_transforms(config.get("img_size", 224), is_training=False)
     dataset = CheXpertDataset(
         csv_path=csv_path,
         img_root=img_root,
@@ -177,8 +197,14 @@ def extract_concepts(backbone, concept_layer, loader, device):
     return concepts, labels
 
 
-def compute_metrics(targets: np.ndarray, preds: np.ndarray, labels: List[str]):
+def compute_metrics(targets: np.ndarray, preds: np.ndarray, labels: List[str], single_label: bool):
     from sklearn.metrics import average_precision_score, roc_auc_score
+
+    if single_label:
+        targets_cls = targets.argmax(axis=1) if targets.ndim > 1 else targets
+        preds_cls = preds.argmax(axis=1)
+        acc = (preds_cls == targets_cls).mean()
+        return {"accuracy": float(acc)}
 
     metrics = {"auroc": {}, "ap": {}}
     valid_aurocs = []
@@ -226,6 +252,8 @@ def main():
     with open(os.path.join(model_dir, "concepts.txt"), "r") as f:
         concepts = [line.strip() for line in f.readlines() if line.strip()]
     labels = config["labels"]
+    label_set = config.get("label_set", "chexpert")
+    single_label = label_set == "covidqu"
 
     dataset = get_dataset(
         config,
@@ -283,18 +311,31 @@ def main():
     for nec in args.nec_levels:
         truncated = truncate_weights(W_g, nec)
         logits = np.matmul(concept_np, truncated.t().numpy()) + b_g.numpy()
-        probs = 1 / (1 + np.exp(-logits))
-        metrics = compute_metrics(target_np, probs, labels)
-        auc = metrics["auroc"]["mean"]
-        ap = metrics["ap"]["mean"]
-        print(f"NEC={nec}: Mean AUROC={auc:.4f}, Mean AP={ap:.4f}")
-        results.append({"nec": nec, "auroc": auc, "ap": ap})
+        if single_label:
+            exp_logits = np.exp(logits - logits.max(axis=1, keepdims=True))
+            probs = exp_logits / exp_logits.sum(axis=1, keepdims=True)
+            metrics = compute_metrics(target_np, probs, labels, single_label=True)
+            acc = metrics["accuracy"]
+            print(f"NEC={nec}: Accuracy={acc:.4f}")
+            results.append({"nec": nec, "accuracy": acc})
+        else:
+            probs = 1 / (1 + np.exp(-logits))
+            metrics = compute_metrics(target_np, probs, labels, single_label=False)
+            auc = metrics["auroc"]["mean"]
+            ap = metrics["ap"]["mean"]
+            print(f"NEC={nec}: Mean AUROC={auc:.4f}, Mean AP={ap:.4f}")
+            results.append({"nec": nec, "auroc": auc, "ap": ap})
 
     output_csv = os.path.join(model_dir, "nec_metrics.csv")
     with open(output_csv, "w") as f:
-        f.write("nec,mean_auroc,mean_ap\n")
-        for row in results:
-            f.write(f"{row['nec']},{row['auroc']:.6f},{row['ap']:.6f}\n")
+        if single_label:
+            f.write("nec,accuracy\n")
+            for row in results:
+                f.write(f"{row['nec']},{row['accuracy']:.6f}\n")
+        else:
+            f.write("nec,mean_auroc,mean_ap\n")
+            for row in results:
+                f.write(f"{row['nec']},{row['auroc']:.6f},{row['ap']:.6f}\n")
     print(f"Saved NEC metrics to {output_csv}")
 
 

@@ -113,7 +113,7 @@ def parse_args():
                         help="Concepts with smaller top-k CLIP activation will be deleted")
     parser.add_argument("--interpretability_cutoff", type=float, default=0.40,
                         help="Concepts with smaller similarity will be deleted")
-    parser.add_argument("--proj_steps", type=int, default=1000,
+    parser.add_argument("--proj_steps", type=int, default=20000,
                         help="Steps to train projection layer")
     parser.add_argument("--proj_lr", type=float, default=1e-3,
                         help="Learning rate for projection layer")
@@ -491,24 +491,77 @@ def evaluate_multilabel(
     y_pred: np.ndarray,
     label_names: list
 ) -> dict:
-    """Compute AUROC and AP for multi-label classification."""
+    """
+    Compute metrics for classification.
+    - For single-label (one-hot): accuracy, per-class accuracy, F1 scores
+    - For multi-label: AUROC and AP per class
+    """
+    from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+    
     metrics = {}
-    valid_aurocs = []
-    valid_aps = []
     
-    for i, name in enumerate(label_names):
-        if len(np.unique(y_true[:, i])) > 1:
-            auroc = roc_auc_score(y_true[:, i], y_pred[:, i])
-            ap = average_precision_score(y_true[:, i], y_pred[:, i])
-            metrics[f"auroc_{name}"] = auroc
-            metrics[f"ap_{name}"] = ap
-            valid_aurocs.append(auroc)
-            valid_aps.append(ap)
+    # Check if this is single-label (exactly one 1.0 per sample in y_true)
+    num_positives_per_sample = y_true.sum(axis=1)
+    is_single_label = np.allclose(num_positives_per_sample, 1.0)
     
-    metrics["mean_auroc"] = np.mean(valid_aurocs) if valid_aurocs else 0.0
-    metrics["mean_ap"] = np.mean(valid_aps) if valid_aps else 0.0
+    if is_single_label:
+        # Single-label classification (one class per sample)
+        # Convert from one-hot to class indices
+        y_true_classes = np.argmax(y_true, axis=1)
+        y_pred_classes = np.argmax(y_pred, axis=1)
+        
+        # Overall accuracy
+        accuracy = accuracy_score(y_true_classes, y_pred_classes)
+        metrics["accuracy"] = accuracy
+        
+        # Per-class metrics
+        cm = confusion_matrix(y_true_classes, y_pred_classes, labels=range(len(label_names)))
+        
+        for i, name in enumerate(label_names):
+            # Per-class accuracy (recall for this class)
+            class_accuracy = cm[i, i] / cm[i].sum() if cm[i].sum() > 0 else 0.0
+            metrics[f"accuracy_{name}"] = class_accuracy
+            
+            # F1 score for this class (one-vs-rest)
+            y_true_binary = (y_true_classes == i).astype(int)
+            y_pred_binary = (y_pred_classes == i).astype(int)
+            f1 = f1_score(y_true_binary, y_pred_binary, zero_division=0)
+            metrics[f"f1_{name}"] = f1
+        
+        # Weighted/macro F1
+        f1_macro = f1_score(y_true_classes, y_pred_classes, average='macro', zero_division=0)
+        f1_weighted = f1_score(y_true_classes, y_pred_classes, average='weighted', zero_division=0)
+        metrics["f1_macro"] = f1_macro
+        metrics["f1_weighted"] = f1_weighted
+        
+    else:
+        # Multi-label classification
+        valid_aurocs = []
+        valid_aps = []
+        
+        for i, name in enumerate(label_names):
+            if len(np.unique(y_true[:, i])) > 1:
+                auroc = roc_auc_score(y_true[:, i], y_pred[:, i])
+                ap = average_precision_score(y_true[:, i], y_pred[:, i])
+                metrics[f"auroc_{name}"] = auroc
+                metrics[f"ap_{name}"] = ap
+                valid_aurocs.append(auroc)
+                valid_aps.append(ap)
+        
+        metrics["mean_auroc"] = np.mean(valid_aurocs) if valid_aurocs else 0.0
+        metrics["mean_ap"] = np.mean(valid_aps) if valid_aps else 0.0
     
     return metrics
+
+
+def evaluate_singlelabel(
+    y_true: np.ndarray,
+    y_pred: np.ndarray
+) -> dict:
+    """Compute accuracy for single-label classification."""
+    preds = y_pred.argmax(axis=1)
+    acc = (preds == y_true).mean()
+    return {"accuracy": float(acc)}
 
 
 def main():
@@ -605,12 +658,45 @@ def main():
     
     print(f"Train: {len(train_dataset)}, Val: {len(val_dataset)}")
     
-    # Get targets
+    # Get targets - handle both multi-label (2D) and single-label (1D) cases
     if hasattr(train_dataset, 'targets'):
-        train_targets = train_dataset.targets.numpy()
+        # Handle both tensor and list cases
+        targets = train_dataset.targets
+        if isinstance(targets, torch.Tensor):
+            train_targets = targets.numpy()
+        elif isinstance(targets, list):
+            train_targets = np.array(targets)
+        else:
+            train_targets = np.array(targets)
     else:
-        train_targets = train_dataset.dataset.targets[train_dataset.indices].numpy()
-    val_targets = val_dataset.targets.numpy()
+        targets = train_dataset.dataset.targets[train_dataset.indices]
+        if isinstance(targets, torch.Tensor):
+            train_targets = targets.numpy()
+        else:
+            train_targets = np.array(targets)
+    
+    # Convert single-label (1D) to multi-label (2D one-hot) for COVID-QU
+    if train_targets.ndim == 1:
+        one_hot = np.zeros((len(train_targets), num_classes), dtype=np.float32)
+        for i, label in enumerate(train_targets):
+            one_hot[i, int(label)] = 1.0
+        train_targets = one_hot
+    
+    # Same for validation
+    val_targets_obj = val_dataset.targets
+    if isinstance(val_targets_obj, torch.Tensor):
+        val_targets = val_targets_obj.numpy()
+    elif isinstance(val_targets_obj, list):
+        val_targets = np.array(val_targets_obj)
+    else:
+        val_targets = np.array(val_targets_obj)
+    
+    # Convert single-label (1D) to multi-label (2D one-hot) for COVID-QU
+    if val_targets.ndim == 1:
+        one_hot = np.zeros((len(val_targets), num_classes), dtype=np.float32)
+        for i, label in enumerate(val_targets):
+            one_hot[i, int(label)] = 1.0
+        val_targets = one_hot
     
     # =========================================
     # Load models
@@ -846,20 +932,33 @@ def main():
     with torch.no_grad():
         train_logits = final_layer(train_c.to(device))
         val_logits = final_layer(val_c.to(device))
-        
+
+    # Choose metrics based on label set
+    is_single_label = args.label_set == "covidqu"
+    if is_single_label:
+        train_probs = torch.softmax(train_logits, dim=1).cpu().numpy()
+        val_probs = torch.softmax(val_logits, dim=1).cpu().numpy()
+        train_targets_cls = train_targets.argmax(axis=1)
+        val_targets_cls = val_targets.argmax(axis=1)
+        train_metrics = evaluate_singlelabel(train_targets_cls, train_probs)
+        val_metrics = evaluate_singlelabel(val_targets_cls, val_probs)
+    else:
         train_probs = torch.sigmoid(train_logits).cpu().numpy()
         val_probs = torch.sigmoid(val_logits).cpu().numpy()
-    
-    train_metrics = evaluate_multilabel(train_targets, train_probs, labels)
-    val_metrics = evaluate_multilabel(val_targets, val_probs, labels)
-    
-    print(f"\nTrain - Mean AUROC: {train_metrics['mean_auroc']:.4f}, Mean AP: {train_metrics['mean_ap']:.4f}")
-    print(f"Val   - Mean AUROC: {val_metrics['mean_auroc']:.4f}, Mean AP: {val_metrics['mean_ap']:.4f}")
-    
-    print("\nPer-class Validation AUROC:")
-    for label in labels:
-        auroc = val_metrics.get(f'auroc_{label}', float('nan'))
-        print(f"  {label}: {auroc:.4f}")
+        train_metrics = evaluate_multilabel(train_targets, train_probs, labels)
+        val_metrics = evaluate_multilabel(val_targets, val_probs, labels)
+
+    if is_single_label:
+        print(f"\nTrain - Accuracy: {train_metrics['accuracy']:.4f}")
+        print(f"Val   - Accuracy: {val_metrics['accuracy']:.4f}")
+    else:
+        print(f"\nTrain - Mean AUROC: {train_metrics['mean_auroc']:.4f}, Mean AP: {train_metrics['mean_ap']:.4f}")
+        print(f"Val   - Mean AUROC: {val_metrics['mean_auroc']:.4f}, Mean AP: {val_metrics['mean_ap']:.4f}")
+        
+        print("\nPer-class Validation AUROC:")
+        for label in labels:
+            auroc = val_metrics.get(f'auroc_{label}', float('nan'))
+            print(f"  {label}: {auroc:.4f}")
     
     # =========================================
     # Save model and results
@@ -921,7 +1020,10 @@ def main():
     print("\n" + "="*60)
     print(f"Training complete!")
     print(f"Final concepts: {len(concepts)}")
-    print(f"Val Mean AUROC: {val_metrics['mean_auroc']:.4f}")
+    if is_single_label:
+        print(f"Val Accuracy: {val_metrics['accuracy']:.4f}")
+    else:
+        print(f"Val Mean AUROC: {val_metrics['mean_auroc']:.4f}")
     print(f"Saved to: {args.output}")
     print("="*60)
 
