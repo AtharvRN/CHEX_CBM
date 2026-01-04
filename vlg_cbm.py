@@ -73,6 +73,17 @@ def _save_interpretations(labels, concepts, W, output_dir: str) -> None:
     _save_metrics(interpretations, os.path.join(output_dir, "interpretations.json"))
 
 
+def _evaluate_single_label(concept_activations, labels_one_hot, W, b, mean, std):
+    """Compute accuracy for single-label (softmax) case."""
+    c_norm = (concept_activations - mean) / std
+    logits = c_norm @ W.T + b
+    probs = torch.softmax(logits, dim=1).numpy()
+    targets = labels_one_hot.argmax(dim=1).numpy()
+    preds = probs.argmax(axis=1)
+    acc = float((preds == targets).mean())
+    return {"accuracy": acc}
+
+
 def _unwrap_model(model):
     """Return the underlying module if DataParallel was used."""
     return model.module if isinstance(model, torch.nn.DataParallel) else model
@@ -144,7 +155,8 @@ def main():
     np.random.seed(args.seed)
     random.seed(args.seed)
 
-    if getattr(args, "label_set", "chexpert") == "covidqu":
+    single_label = getattr(args, "label_set", "chexpert") == "covidqu"
+    if single_label:
         labels = COVIDQU_LABELS
         print("Using 3 COVID-QU labels")
         if args.competition_labels:
@@ -375,14 +387,20 @@ def main():
     print(f"Sparsity: {nnz}/{total} non-zero ({100*nnz/total:.1f}%)")
 
     print("\nEvaluating...")
-    train_metrics = evaluate(train_concepts, train_labels, W, b, mean, std, labels)
-    val_metrics = evaluate(val_concepts, val_labels, W, b, mean, std, labels)
-    print(f"\nTrain - Mean AUROC: {train_metrics['mean_auroc']:.4f}")
-    print(f"Val   - Mean AUROC: {val_metrics['mean_auroc']:.4f}")
-    print("\nPer-class Validation AUROC:")
-    for label in labels:
-        auroc = val_metrics.get(f'auroc_{label}', float('nan'))
-        print(f"  {label}: {auroc:.4f}")
+    if single_label:
+        train_metrics = _evaluate_single_label(train_concepts, train_labels, W, b, mean, std)
+        val_metrics = _evaluate_single_label(val_concepts, val_labels, W, b, mean, std)
+        print(f"\nTrain - Accuracy: {train_metrics['accuracy']:.4f}")
+        print(f"Val   - Accuracy: {val_metrics['accuracy']:.4f}")
+    else:
+        train_metrics = evaluate(train_concepts, train_labels, W, b, mean, std, labels)
+        val_metrics = evaluate(val_concepts, val_labels, W, b, mean, std, labels)
+        print(f"\nTrain - Mean AUROC: {train_metrics['mean_auroc']:.4f}")
+        print(f"Val   - Mean AUROC: {val_metrics['mean_auroc']:.4f}")
+        print("\nPer-class Validation AUROC:")
+        for label in labels:
+            auroc = val_metrics.get(f'auroc_{label}', float('nan'))
+            print(f"  {label}: {auroc:.4f}")
 
     print("\nSaving...")
     save_concept_artifacts(
@@ -401,7 +419,10 @@ def main():
     print("VLG-CBM TRAINING COMPLETE")
     print("="*60)
     print(f"Final concepts: {len(concepts)}")
-    print(f"Val Mean AUROC: {val_metrics['mean_auroc']:.4f}")
+    if single_label:
+        print(f"Val Accuracy: {val_metrics['accuracy']:.4f}")
+    else:
+        print(f"Val Mean AUROC: {val_metrics['mean_auroc']:.4f}")
     print(f"Sparsity: {100*nnz/total:.1f}% non-zero")
     print(f"Saved to: {args.output}")
     print("="*60)
