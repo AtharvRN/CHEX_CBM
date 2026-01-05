@@ -108,3 +108,6 @@ python generate_annotations.py \
 - COVID-QU uses folder loading by default (no CSV needed).
 - VLG-CBM still requires concept annotations; supply `--annotation_dir/--val_annotation_dir`.
 - For speed: use `--num_workers`, larger `--batch_size`, and `--use_data_parallel` where available. Mixed precision can be added if needed.
+
+## External weights
+- **CheXagent vision encoder (2-3b)**: downloaded to `~/models/chexagent` via `huggingface_hub.snapshot_download(repo_id="StanfordAIMI/CheXagent-2-3b", cache_dir="~/models/chexagent")`. Point any CheXagent-dependent scripts to that snapshot path.
