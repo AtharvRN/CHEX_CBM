@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Evaluate CheXagent for CheXpert or COVID-QU classification.
+Evaluate vision-language models for CheXpert or COVID-QU classification.
 
 Examples:
   python scripts/eval_chexagent.py --label_set chexpert --data_dir /path/to/CheXpert-v1.0-small
   python scripts/eval_chexagent.py --label_set covidqu --data_dir /path/to/COVIDQU --covidqu_variant infection
+  python scripts/eval_chexagent.py --label_set chexpert --data_dir /path/to/CheXpert-v1.0-small \\
+    --model_backend hf_vlm --model_id google/medgemma-4b-it --use_chat_template
 """
 
 import argparse
@@ -12,13 +14,28 @@ import csv
 import json
 import os
 import random
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+from PIL import Image
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+try:
+    from transformers import AutoProcessor
+    PROCESSOR_AVAILABLE = True
+except ImportError:
+    AutoProcessor = None
+    PROCESSOR_AVAILABLE = False
+try:
+    from transformers import AutoModelForMultimodalLM
+    MULTIMODAL_AVAILABLE = True
+except ImportError:
+    AutoModelForMultimodalLM = None
+    MULTIMODAL_AVAILABLE = False
 
 from dataset import (
     CheXpertDataset,
@@ -49,8 +66,13 @@ def parse_args() -> argparse.Namespace:
                         help="CheXpert: use 12 pathology labels")
     parser.add_argument("--covidqu_variant", type=str, default="infection",
                         choices=["infection", "lung"])
-    parser.add_argument("--model_path", type=str, default=os.path.expanduser("~/models/chexagent"),
-                        help="Local CheXagent path; falls back to HF model ID if missing")
+    parser.add_argument("--model_backend", type=str, default="chexagent",
+                        choices=["chexagent", "hf_vlm"],
+                        help="Backend loader: chexagent or generic HF VLM")
+    parser.add_argument("--model_id", type=str, default=None,
+                        help="HuggingFace model ID or local path (required for hf_vlm)")
+    parser.add_argument("--model_path", type=str, default=None,
+                        help="Local model path (optional)")
     parser.add_argument("--dtype", type=str, default="bfloat16",
                         choices=["float16", "bfloat16", "float32"])
     parser.add_argument("--device", type=str, default="auto",
@@ -67,6 +89,11 @@ def parse_args() -> argparse.Namespace:
                         choices=["skip", "negative", "positive", "count_wrong"],
                         help="How to handle unparseable responses")
     parser.add_argument("--max_new_tokens", type=int, default=32)
+    parser.add_argument("--use_chat_template", action="store_true",
+                        help="HF VLM: use chat template if available")
+    parser.add_argument("--chexpert_prompt_mode", type=str, default="per_label",
+                        choices=["per_label", "multi_label"],
+                        help="CheXpert: per-label yes/no or one multi-label prompt")
     parser.add_argument("--prompt_mode", type=str, default="single_prompt",
                         choices=["single_prompt", "one_vs_rest"],
                         help="COVID-QU only: single_prompt or one_vs_rest")
@@ -81,8 +108,7 @@ def resolve_dtype(name: str) -> torch.dtype:
     }[name]
 
 
-def load_chexagent(model_path: str, dtype: torch.dtype, device: str):
-    model_name = model_path if Path(model_path).exists() else DEFAULT_MODEL_ID
+def load_chexagent(model_name: str, dtype: torch.dtype, device: str):
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if device == "auto":
         model = AutoModelForCausalLM.from_pretrained(
@@ -96,6 +122,32 @@ def load_chexagent(model_path: str, dtype: torch.dtype, device: str):
     model = model.to(dtype)
     model.eval()
     return tokenizer, model
+
+
+def load_hf_vlm(model_name: str, dtype: torch.dtype, device: str):
+    if not PROCESSOR_AVAILABLE:
+        raise ImportError("AutoProcessor not available in this transformers build.")
+    model_name_lower = model_name.lower()
+    if "medgemma" in model_name_lower and MULTIMODAL_AVAILABLE:
+        model_cls = AutoModelForMultimodalLM
+    else:
+        try:
+            from transformers import AutoModelForVision2Seq
+            model_cls = AutoModelForVision2Seq
+        except ImportError:
+            model_cls = AutoModelForCausalLM
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+    if device == "auto":
+        model = model_cls.from_pretrained(
+            model_name, device_map="auto", torch_dtype=dtype, trust_remote_code=True
+        )
+    else:
+        model = model_cls.from_pretrained(
+            model_name, device_map=None, torch_dtype=dtype, trust_remote_code=True
+        )
+        model = model.to(device)
+    model.eval()
+    return processor, model
 
 
 def chexagent_answer(
@@ -116,6 +168,13 @@ def chexagent_answer(
     )
     if device != "auto":
         input_ids = input_ids.to(device)
+    else:
+        # Align inputs with the embedding layer device under device_map="auto".
+        if hasattr(model, "get_input_embeddings"):
+            input_device = model.get_input_embeddings().weight.device
+        else:
+            input_device = next(model.parameters()).device
+        input_ids = input_ids.to(input_device)
     output = model.generate(
         input_ids,
         do_sample=False,
@@ -129,6 +188,126 @@ def chexagent_answer(
     response = tokenizer.decode(output[input_ids.size(1):-1])
     return response.strip()
 
+
+def hf_vlm_answer(
+    processor,
+    model,
+    image_path: str,
+    prompt: str,
+    device: str,
+    max_new_tokens: int,
+    use_chat_template: bool,
+) -> str:
+    image = Image.open(image_path).convert("RGB")
+    if use_chat_template:
+        image_item = {"type": "image"}
+        if image_path.startswith("http://") or image_path.startswith("https://"):
+            image_item["url"] = image_path
+        else:
+            image_item["image"] = image
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    image_item,
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        if hasattr(processor, "apply_chat_template"):
+            inputs = processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+        elif hasattr(processor, "tokenizer") and hasattr(processor.tokenizer, "apply_chat_template"):
+            inputs = processor.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+        else:
+            inputs = processor(images=image, text=prompt, return_tensors="pt")
+    else:
+        inputs = processor(images=image, text=prompt, return_tensors="pt")
+    if device == "auto":
+        input_device = next(model.parameters()).device
+    else:
+        input_device = torch.device(device)
+    inputs = {k: v.to(input_device) if torch.is_tensor(v) else v for k, v in inputs.items()}
+    output = model.generate(
+        **inputs,
+        do_sample=False,
+        num_beams=1,
+        temperature=1.0,
+        top_p=1.0,
+        use_cache=True,
+        max_new_tokens=max_new_tokens,
+    )
+    input_len = None
+    if isinstance(inputs, dict) and "input_ids" in inputs:
+        input_len = inputs["input_ids"].shape[-1]
+    if hasattr(processor, "batch_decode"):
+        if input_len is not None:
+            response = processor.batch_decode(output[:, input_len:], skip_special_tokens=True)[0]
+        else:
+            response = processor.batch_decode(output, skip_special_tokens=True)[0]
+    else:
+        if input_len is not None:
+            response = processor.decode(output[0][input_len:], skip_special_tokens=True)
+        else:
+            response = processor.decode(output[0], skip_special_tokens=True)
+    return response.strip()
+
+
+def resolve_model_name(args: argparse.Namespace) -> str:
+    if args.model_backend == "chexagent":
+        if args.model_id:
+            return args.model_id
+        if args.model_path and Path(args.model_path).exists():
+            return args.model_path
+        default_path = os.path.expanduser("~/models/chexagent")
+        if Path(default_path).exists():
+            return default_path
+        return DEFAULT_MODEL_ID
+    if args.model_id:
+        return args.model_id
+    if args.model_path:
+        return args.model_path
+    raise ValueError("--model_id or --model_path is required for hf_vlm backend")
+
+
+def build_answer_fn(args: argparse.Namespace) -> Tuple[Callable[[str, str], str], Dict[str, str]]:
+    dtype = resolve_dtype(args.dtype)
+    model_name = resolve_model_name(args)
+    if args.model_backend == "hf_vlm" and "medgemma" in model_name.lower():
+        if not args.use_chat_template:
+            args.use_chat_template = True
+            print("Info: enabling --use_chat_template for MedGemma.")
+    if args.model_backend == "chexagent":
+        tokenizer, model = load_chexagent(model_name, dtype, args.device)
+        def answer_fn(image_path: str, prompt: str) -> str:
+            return chexagent_answer(
+                tokenizer, model, image_path, prompt, args.device, args.max_new_tokens
+            )
+    else:
+        processor, model = load_hf_vlm(model_name, dtype, args.device)
+        def answer_fn(image_path: str, prompt: str) -> str:
+            return hf_vlm_answer(
+                processor,
+                model,
+                image_path,
+                prompt,
+                args.device,
+                args.max_new_tokens,
+                args.use_chat_template,
+            )
+    meta = {"model_backend": args.model_backend, "model_id": model_name}
+    return answer_fn, meta
 
 def parse_yes_no(text: str) -> Optional[bool]:
     t = text.strip().lower()
@@ -147,6 +326,39 @@ def parse_yes_no(text: str) -> Optional[bool]:
 
 def chexpert_prompt(label: str) -> str:
     return f"Does this chest X-ray show {label}? Answer yes or no."
+
+
+def chexpert_multi_prompt(labels: List[str]) -> str:
+    label_list = ", ".join(labels)
+    return (
+        "List all findings present in this chest X-ray from the following labels: "
+        f"{label_list}. Respond with a comma-separated list of labels. "
+        "If none are present, respond with No Finding."
+    )
+
+
+def normalize_text(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9\\s-]", " ", text.lower())
+    cleaned = cleaned.replace("-", " ")
+    cleaned = re.sub(r"\\s+", " ", cleaned).strip()
+    return f" {cleaned} "
+
+
+def parse_multi_labels(text: str, labels: List[str]) -> Optional[List[str]]:
+    normalized = normalize_text(text)
+    matched = []
+    for label in labels:
+        label_norm = normalize_text(label).strip()
+        if f" {label_norm} " in normalized:
+            matched.append(label)
+    if "no finding" in normalized or "no findings" in normalized:
+        if "No Finding" not in matched:
+            matched.append("No Finding")
+    if not matched:
+        return None
+    if "No Finding" in matched and len(matched) > 1:
+        matched = [label for label in matched if label != "No Finding"]
+    return matched
 
 
 def covidqu_single_prompt(labels: List[str]) -> str:
@@ -215,7 +427,7 @@ def normalize_covidqu_split(split: str) -> str:
     return split
 
 
-def eval_chexpert(args, tokenizer, model, output_dir: Path) -> Dict[str, Dict]:
+def eval_chexpert(args, answer_fn: Callable[[str, str], str], output_dir: Path) -> Dict[str, Dict]:
     csv_path = args.csv_path
     if csv_path is None:
         split = normalize_chexpert_split(args.split)
@@ -254,25 +466,41 @@ def eval_chexpert(args, tokenizer, model, output_dir: Path) -> Dict[str, Dict]:
         target = dataset.targets[idx].numpy().astype(int)
         image_preds = []
         image_responses = []
-        for label_idx, label in enumerate(labels):
-            prompt = chexpert_prompt(label)
-            response = chexagent_answer(
-                tokenizer, model, img_path, prompt, args.device, args.max_new_tokens
-            )
-            pred_raw = parse_yes_no(response)
-            if pred_raw is None:
+        if args.chexpert_prompt_mode == "multi_label":
+            prompt = chexpert_multi_prompt(labels)
+            response = answer_fn(img_path, prompt)
+            matched = parse_multi_labels(response, labels)
+            if matched is None:
                 if args.unknown_policy == "skip":
-                    pred = np.nan
+                    image_preds = [np.nan] * len(labels)
                 elif args.unknown_policy == "negative":
-                    pred = 0.0
+                    image_preds = [0.0] * len(labels)
                 elif args.unknown_policy == "positive":
-                    pred = 1.0
+                    image_preds = [1.0] * len(labels)
                 else:
-                    pred = float(1 - target[label_idx])
+                    image_preds = [float(1 - val) for val in target]
             else:
-                pred = float(pred_raw)
-            image_preds.append(pred)
-            image_responses.append(response)
+                matched_set = set(matched)
+                image_preds = [1.0 if label in matched_set else 0.0 for label in labels]
+            image_responses = [response] * len(labels)
+        else:
+            for label_idx, label in enumerate(labels):
+                prompt = chexpert_prompt(label)
+                response = answer_fn(img_path, prompt)
+                pred_raw = parse_yes_no(response)
+                if pred_raw is None:
+                    if args.unknown_policy == "skip":
+                        pred = np.nan
+                    elif args.unknown_policy == "negative":
+                        pred = 0.0
+                    elif args.unknown_policy == "positive":
+                        pred = 1.0
+                    else:
+                        pred = float(1 - target[label_idx])
+                else:
+                    pred = float(pred_raw)
+                image_preds.append(pred)
+                image_responses.append(response)
         preds.append(image_preds)
         targets.append(target)
         responses.append(image_responses)
@@ -302,6 +530,7 @@ def eval_chexpert(args, tokenizer, model, output_dir: Path) -> Dict[str, Dict]:
         "task": "chexpert",
         "num_samples": len(indices),
         "unknown_policy": args.unknown_policy,
+        "prompt_mode": args.chexpert_prompt_mode,
         "labels": labels,
         "per_label": per_label,
         "macro_avg": macro_avg,
@@ -326,7 +555,7 @@ def eval_chexpert(args, tokenizer, model, output_dir: Path) -> Dict[str, Dict]:
     return output
 
 
-def eval_covidqu(args, tokenizer, model, output_dir: Path) -> Dict[str, Dict]:
+def eval_covidqu(args, answer_fn: Callable[[str, str], str], output_dir: Path) -> Dict[str, Dict]:
     dataset = CovidQUDataset(
         root=args.data_dir,
         split=normalize_covidqu_split(args.split),
@@ -349,9 +578,7 @@ def eval_covidqu(args, tokenizer, model, output_dir: Path) -> Dict[str, Dict]:
         target_idx = dataset.targets[idx]
         if args.prompt_mode == "single_prompt":
             prompt = covidqu_single_prompt(COVIDQU_LABELS)
-            response = chexagent_answer(
-                tokenizer, model, img_path, prompt, args.device, args.max_new_tokens
-            )
+            response = answer_fn(img_path, prompt)
             label = parse_covidqu_label(response, COVIDQU_LABELS)
             if label is None:
                 if args.unknown_policy == "skip":
@@ -368,9 +595,7 @@ def eval_covidqu(args, tokenizer, model, output_dir: Path) -> Dict[str, Dict]:
             image_responses = []
             for label in COVIDQU_LABELS:
                 prompt = chexpert_prompt(label)
-                response = chexagent_answer(
-                    tokenizer, model, img_path, prompt, args.device, args.max_new_tokens
-                )
+                response = answer_fn(img_path, prompt)
                 pred_raw = parse_yes_no(response)
                 if pred_raw is None:
                     if args.unknown_policy == "skip":
@@ -446,14 +671,14 @@ def main() -> None:
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dtype = resolve_dtype(args.dtype)
-    tokenizer, model = load_chexagent(args.model_path, dtype, args.device)
+    answer_fn, meta = build_answer_fn(args)
 
     if args.label_set == "chexpert":
-        metrics = eval_chexpert(args, tokenizer, model, output_dir)
+        metrics = eval_chexpert(args, answer_fn, output_dir)
     else:
-        metrics = eval_covidqu(args, tokenizer, model, output_dir)
+        metrics = eval_covidqu(args, answer_fn, output_dir)
 
+    metrics.update(meta)
     metrics_path = output_dir / "metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2))
     print(f"Wrote metrics to {metrics_path}")
