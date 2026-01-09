@@ -3,10 +3,20 @@
 Evaluate vision-language models for CheXpert or COVID-QU classification.
 
 Examples:
+  # CheXagent
   python scripts/eval_chexagent.py --label_set chexpert --data_dir /path/to/CheXpert-v1.0-small
+  
+  # COVID-QU
   python scripts/eval_chexagent.py --label_set covidqu --data_dir /path/to/COVIDQU --covidqu_variant infection
+  
+  # MedGemma (pipeline API - recommended)
   python scripts/eval_chexagent.py --label_set chexpert --data_dir /path/to/CheXpert-v1.0-small \\
-    --model_backend hf_vlm --model_id google/medgemma-4b-it --use_chat_template
+    --model_backend hf_vlm --model_id google/medgemma-4b-it --use_pipeline
+  
+  # MedGemma with custom system prompt
+  python scripts/eval_chexagent.py --label_set chexpert --data_dir /path/to/CheXpert-v1.0-small \\
+    --model_backend hf_vlm --model_id google/medgemma-4b-it --use_pipeline \\
+    --system_prompt "You are an expert chest radiologist."
 """
 
 import argparse
@@ -16,7 +26,7 @@ import os
 import random
 import re
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -36,6 +46,11 @@ try:
 except ImportError:
     AutoModelForMultimodalLM = None
     MULTIMODAL_AVAILABLE = False
+try:
+    from transformers import pipeline
+    PIPELINE_AVAILABLE = True
+except ImportError:
+    PIPELINE_AVAILABLE = False
 
 from dataset import (
     CheXpertDataset,
@@ -91,6 +106,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_new_tokens", type=int, default=32)
     parser.add_argument("--use_chat_template", action="store_true",
                         help="HF VLM: use chat template if available")
+    parser.add_argument("--use_pipeline", action="store_true",
+                        help="HF VLM: use pipeline API (recommended for MedGemma)")
+    parser.add_argument("--system_prompt", type=str, default="You are an expert radiologist.",
+                        help="System prompt for chat-based models")
     parser.add_argument("--chexpert_prompt_mode", type=str, default="per_label",
                         choices=["per_label", "multi_label"],
                         help="CheXpert: per-label yes/no or one multi-label prompt")
@@ -148,6 +167,27 @@ def load_hf_vlm(model_name: str, dtype: torch.dtype, device: str):
         model = model.to(device)
     model.eval()
     return processor, model
+
+
+def load_hf_pipeline(model_name: str, dtype: torch.dtype, device: str):
+    """Load HF pipeline for image-text-to-text (e.g., MedGemma)."""
+    if not PIPELINE_AVAILABLE:
+        raise ImportError("pipeline not available in this transformers build.")
+    
+    # For pipeline, device should be actual device string, not 'auto'
+    if device == "auto":
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device_str = device
+    
+    pipe = pipeline(
+        "image-text-to-text",
+        model=model_name,
+        torch_dtype=dtype,
+        device=device_str,
+        trust_remote_code=True
+    )
+    return pipe
 
 
 def chexagent_answer(
@@ -264,6 +304,36 @@ def hf_vlm_answer(
     return response.strip()
 
 
+def pipeline_answer(
+    pipe,
+    image_path: str,
+    prompt: str,
+    max_new_tokens: int,
+    system_prompt: str = "You are an expert radiologist."
+) -> str:
+    """Answer using HF pipeline API (recommended for MedGemma)."""
+    image = Image.open(image_path).convert("RGB")
+    
+    # Format messages according to MedGemma API
+    messages = [
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": system_prompt}]
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image", "image": image}
+            ]
+        }
+    ]
+    
+    output = pipe(text=messages, max_new_tokens=max_new_tokens)
+    response = output[0]["generated_text"][-1]["content"]
+    return response.strip()
+
+
 def resolve_model_name(args: argparse.Namespace) -> str:
     if args.model_backend == "chexagent":
         if args.model_id:
@@ -284,17 +354,28 @@ def resolve_model_name(args: argparse.Namespace) -> str:
 def build_answer_fn(args: argparse.Namespace) -> Tuple[Callable[[str, str], str], Dict[str, str]]:
     dtype = resolve_dtype(args.dtype)
     model_name = resolve_model_name(args)
+    
+    # Auto-enable pipeline for MedGemma (recommended usage)
     if args.model_backend == "hf_vlm" and "medgemma" in model_name.lower():
-        if not args.use_chat_template:
-            args.use_chat_template = True
-            print("Info: enabling --use_chat_template for MedGemma.")
+        if not args.use_pipeline:
+            args.use_pipeline = True
+            print("Info: enabling --use_pipeline for MedGemma (recommended).")
+    
     if args.model_backend == "chexagent":
         tokenizer, model = load_chexagent(model_name, dtype, args.device)
         def answer_fn(image_path: str, prompt: str) -> str:
             return chexagent_answer(
                 tokenizer, model, image_path, prompt, args.device, args.max_new_tokens
             )
+    elif args.use_pipeline:
+        # Use pipeline API (recommended for MedGemma)
+        pipe = load_hf_pipeline(model_name, dtype, args.device)
+        def answer_fn(image_path: str, prompt: str) -> str:
+            return pipeline_answer(
+                pipe, image_path, prompt, args.max_new_tokens, args.system_prompt
+            )
     else:
+        # Use direct model generation (for other VLMs)
         processor, model = load_hf_vlm(model_name, dtype, args.device)
         def answer_fn(image_path: str, prompt: str) -> str:
             return hf_vlm_answer(
@@ -306,7 +387,11 @@ def build_answer_fn(args: argparse.Namespace) -> Tuple[Callable[[str, str], str]
                 args.max_new_tokens,
                 args.use_chat_template,
             )
-    meta = {"model_backend": args.model_backend, "model_id": model_name}
+    meta = {
+        "model_backend": args.model_backend,
+        "model_id": model_name,
+        "use_pipeline": args.use_pipeline if args.model_backend == "hf_vlm" else False
+    }
     return answer_fn, meta
 
 def parse_yes_no(text: str) -> Optional[bool]:

@@ -95,9 +95,37 @@ python generate_annotations.py \
 ```
 (Run again with `--split val` for validation.)
 
+## Concept Saliency Visualization
+Understand which image regions activate specific concepts and how concepts contribute to predictions.
+Visualize trained CBM:
+```bash
+python visualize_concepts.py \
+  --model_type vlg_cbm \
+  --model_dir checkpoints/vlg_cbm_10k \
+  --data_dir /workspace/CheXpert-v1.0-small \
+  --concepts concepts/chexpert_concepts.txt \
+  --output visualizations/concepts \
+  --num_samples 20
+```
+Disease attribution (see which concepts drive disease predictions):
+```bash
+python visualize_concepts.py \
+  --model_type vlg_cbm \
+  --model_dir checkpoints/vlg_cbm_10k \
+  --data_dir /workspace/CheXpert-v1.0-small \
+  --concepts concepts/chexpert_concepts.txt \
+  --disease_attribution \
+  --disease_idx 0 \
+  --output visualizations/disease_attr
+```
+Interactive exploration via Jupyter: `notebooks/concept_saliency.ipynb`
+Full documentation: `docs/SALIENCY_GUIDE.md`
+
 ## Scripts & Files
 - `train.py` — backbone training (CheXpert multilabel, COVID-QU single-label).
 - `eval.py` — unified evaluator (AUROC/AP for CheXpert, accuracy for COVID-QU).
+- `visualize_concepts.py` — generate concept saliency maps and disease attributions.
+- `utils/saliency.py` — GradCAM, Integrated Gradients, SmoothGrad implementations.
 - `label_free_cbm.py` — LF-CBM training.
 - `vlg_cbm.py` — VLG-CBM training.
 - `generate_annotations.py` — ChEX-based concept annotation generation.
