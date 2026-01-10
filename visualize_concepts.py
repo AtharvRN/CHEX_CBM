@@ -185,17 +185,15 @@ def load_vlg_cbm_model(args, device):
         print(f"Using {n_concepts} concepts from input file")
     
     
-    # Get labels
+    # Get labels - default to 5 competition labels unless pathology_labels is set
     if args.label_set == "covidqu":
         labels = COVIDQU_LABELS
     elif args.pathology_labels:
-        labels = CHEXPERT_PATHOLOGY_LABELS
-    elif config.get("competition_labels"):
-        labels = CHEXPERT_COMPETITION_LABELS
+        labels = CHEXPERT_PATHOLOGY_LABELS  # 12 classes
     elif "labels" in config:
         labels = config["labels"]
     else:
-        labels = CHEXPERT_COMPETITION_LABELS
+        labels = CHEXPERT_COMPETITION_LABELS  # 5 classes (default)
     
     # Build backbone (following evaluate_nec.py pattern)
     use_xrv = args.backbone in ["xrv-all", "xrv-chex", "xrv-nih"]
@@ -215,7 +213,7 @@ def load_vlg_cbm_model(args, device):
     if os.path.exists(backbone_path):
         state = torch.load(backbone_path, map_location=device, weights_only=False)
         if hasattr(backbone_model, "backbone"):
-            backbone_model.backbone.load_state_dict(state)
+            backbone_model.backbone.load_state_dict(state, strict=False)
         else:
             backbone_model.load_state_dict(state, strict=False)
     elif config.get("backbone_ckpt"):
