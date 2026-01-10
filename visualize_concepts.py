@@ -210,14 +210,20 @@ def load_vlg_cbm_model(args, device):
     backbone_path = os.path.join(args.model_dir, "backbone.pth")
     if os.path.exists(backbone_path):
         state = torch.load(backbone_path, map_location=device, weights_only=False)
+        # Filter out classifier weights if there's a size mismatch
+        filtered_state = {k: v for k, v in state.items() 
+                         if not k.startswith('classifier') and not k.startswith('backbone.classifier')}
         if hasattr(backbone_model, "backbone"):
-            backbone_model.backbone.load_state_dict(state, strict=False)
+            backbone_model.backbone.load_state_dict(filtered_state, strict=False)
         else:
-            backbone_model.load_state_dict(state, strict=False)
+            backbone_model.load_state_dict(filtered_state, strict=False)
     elif config.get("backbone_ckpt"):
         ckpt = torch.load(config["backbone_ckpt"], map_location=device, weights_only=False)
         state = ckpt.get("model_state_dict", ckpt)
-        backbone_model.load_state_dict(state, strict=False)
+        # Filter out classifier weights if there's a size mismatch
+        filtered_state = {k: v for k, v in state.items() 
+                         if not k.startswith('classifier') and not k.startswith('backbone.classifier')}
+        backbone_model.load_state_dict(filtered_state, strict=False)
     
     # Extract backbone features module
     if args.backbone == "densenet121":
