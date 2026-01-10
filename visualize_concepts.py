@@ -574,10 +574,11 @@ def main():
         csv_path = os.path.join(args.data_dir, f"{args.split}.csv")
         dataset = CheXpertDataset(
             csv_path=csv_path,
+            img_root=args.data_dir,
             transform=transform,
+            labels=labels,
             uncertain_strategy="ones",
-            use_frontal_only=True,
-            label_subset=labels
+            frontal_only=True
         )
     
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
