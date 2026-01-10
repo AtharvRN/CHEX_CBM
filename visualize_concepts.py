@@ -185,32 +185,88 @@ def load_vlg_cbm_model(args, device):
         print(f"Using {n_concepts} concepts from input file")
     
     
-    # Load backbone
-    backbone_model = get_model(args.backbone, num_classes=12, pretrained=False)
+    # Get labels
+    if args.label_set == "covidqu":
+        labels = COVIDQU_LABELS
+    elif args.pathology_labels:
+        labels = CHEXPERT_PATHOLOGY_LABELS
+    elif config.get("competition_labels"):
+        labels = CHEXPERT_COMPETITION_LABELS
+    elif "labels" in config:
+        labels = config["labels"]
+    else:
+        labels = CHEXPERT_COMPETITION_LABELS
     
+    # Build backbone (following evaluate_nec.py pattern)
+    use_xrv = args.backbone in ["xrv-all", "xrv-chex", "xrv-nih"]
+    backbone_kwargs = {}
+    if use_xrv:
+        backbone_kwargs["target_labels"] = labels
+    
+    backbone_model = get_model(
+        args.backbone,
+        num_classes=len(labels),
+        pretrained=True,
+        **backbone_kwargs
+    )
+    
+    # Load backbone weights if available
+    backbone_path = os.path.join(args.model_dir, "backbone.pth")
+    if os.path.exists(backbone_path):
+        state = torch.load(backbone_path, map_location=device, weights_only=False)
+        if hasattr(backbone_model, "backbone"):
+            backbone_model.backbone.load_state_dict(state)
+        else:
+            backbone_model.load_state_dict(state, strict=False)
+    elif config.get("backbone_ckpt"):
+        ckpt = torch.load(config["backbone_ckpt"], map_location=device, weights_only=False)
+        state = ckpt.get("model_state_dict", ckpt)
+        backbone_model.load_state_dict(state, strict=False)
+    
+    # Extract backbone features module
     if args.backbone == "densenet121":
+        feature_dim = 1024
         backbone = backbone_model.backbone.features
     elif args.backbone == "resnet50":
+        feature_dim = 2048
         backbone = nn.Sequential(*list(backbone_model.backbone.children())[:-1])
     else:
-        raise ValueError(f"Unsupported backbone: {args.backbone}")
+        feature_dim = getattr(backbone_model, "feature_dim", 1024)
+        
+        class XRVBackbone(nn.Module):
+            def __init__(self, model):
+                super().__init__()
+                self.model = model
+            
+            def forward(self, x):
+                return self.model.get_features(x)
+        
+        backbone = XRVBackbone(backbone_model)
     
     # Load concept layer
     concept_layer = ConceptLayer(
         input_dim=feature_dim,
         n_concepts=n_concepts,
-        num_hidden=config.get("num_hidden", 1),
+        num_hidden=config.get("cbl_hidden_layers", 1),
         hidden_dim=config.get("hidden_dim")
     )
     
-    # Load weights
-    model = BackboneWithConcepts(backbone, concept_layer)
-    ckpt_path = os.path.join(args.model_dir, "best_model.pth")
-    state_dict = torch.load(ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(state_dict, strict=False)
+    concept_layer_path = os.path.join(args.model_dir, "concept_layer.pt")
+    if os.path.exists(concept_layer_path):
+        concept_layer.load_state_dict(
+            torch.load(concept_layer_path, map_location=device, weights_only=False)
+        )
+    else:
+        raise FileNotFoundError(f"Could not find concept_layer.pt in {args.model_dir}")
     
-    # Load final layer weights
-    W_path = os.path.join(args.model_dir, "W_c.pt")
+    # Create combined model
+    model = BackboneWithConcepts(backbone, concept_layer)
+    
+    # Load final layer weights (W_g.pt instead of W_c.pt)
+    W_path = os.path.join(args.model_dir, "W_g.pt")
+    if not os.path.exists(W_path):
+        W_path = os.path.join(args.model_dir, "W_c.pt")  # Fallback
+    
     W = torch.load(W_path, map_location=device, weights_only=False)
     
     return model, W
