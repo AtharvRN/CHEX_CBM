@@ -190,8 +190,6 @@ def load_vlg_cbm_model(args, device):
         labels = COVIDQU_LABELS
     elif args.pathology_labels:
         labels = CHEXPERT_PATHOLOGY_LABELS  # 12 classes
-    elif "labels" in config:
-        labels = config["labels"]
     else:
         labels = CHEXPERT_COMPETITION_LABELS  # 5 classes (default)
     
