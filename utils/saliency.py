@@ -368,7 +368,7 @@ def visualize_heatmap(
     """
     # Convert image to numpy
     if isinstance(image, torch.Tensor):
-        img_np = image.squeeze().cpu().numpy()
+        img_np = image.squeeze().detach().cpu().numpy()
         if img_np.shape[0] == 3:  # (C, H, W) -> (H, W, C)
             img_np = np.transpose(img_np, (1, 2, 0))
     elif isinstance(image, Image.Image):
@@ -423,7 +423,7 @@ def save_saliency_visualization(
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     
     # Original image
-    img_np = image.squeeze().cpu().numpy()
+    img_np = image.squeeze().detach().cpu().numpy()
     if img_np.shape[0] == 3:
         img_np = np.transpose(img_np, (1, 2, 0))
     

@@ -185,13 +185,15 @@ def load_vlg_cbm_model(args, device):
         print(f"Using {n_concepts} concepts from input file")
     
     
-    # Get labels - default to 5 competition labels unless pathology_labels is set
+    # Get labels - check config first, then args
     if args.label_set == "covidqu":
         labels = COVIDQU_LABELS
     elif args.pathology_labels:
         labels = CHEXPERT_PATHOLOGY_LABELS  # 12 classes
+    elif config.get("competition_labels") == True:
+        labels = CHEXPERT_COMPETITION_LABELS  # 5 classes
     else:
-        labels = CHEXPERT_COMPETITION_LABELS  # 5 classes (default)
+        labels = CHEXPERT_PATHOLOGY_LABELS  # 12 classes
     
     # Build backbone (following evaluate_nec.py pattern)
     use_xrv = args.backbone in ["xrv-all", "xrv-chex", "xrv-nih"]
