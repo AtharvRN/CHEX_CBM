@@ -561,7 +561,7 @@ def main():
     print(f"Using {len(labels)} disease labels: {labels}")
     
     # Create dataset
-    transform = get_transforms(train=False, img_size=224)
+    transform = get_transforms(img_size=224, is_training=False)
     
     if args.label_set == "covidqu":
         dataset = CovidQUDataset(
