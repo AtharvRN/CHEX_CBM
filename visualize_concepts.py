@@ -148,8 +148,42 @@ def load_vlg_cbm_model(args, device):
     with open(config_path) as f:
         config = json.load(f)
     
-    n_concepts = config["n_concepts"]
     feature_dim = config.get("feature_dim", 1024)
+    
+    # Get number of concepts - try multiple sources in order of reliability
+    n_concepts = None
+    
+    # 1. Try to load from model directory's concepts.txt (most reliable)
+    model_concepts_path = os.path.join(args.model_dir, "concepts.txt")
+    if os.path.exists(model_concepts_path):
+        with open(model_concepts_path) as f:
+            n_concepts = sum(1 for line in f if line.strip())
+        print(f"Loaded {n_concepts} concepts from {model_concepts_path}")
+    
+    # 2. Try to infer from W_c.pt shape
+    if n_concepts is None:
+        W_path = os.path.join(args.model_dir, "W_c.pt")
+        if os.path.exists(W_path):
+            W_temp = torch.load(W_path, map_location='cpu', weights_only=False)
+            if isinstance(W_temp, torch.Tensor):
+                n_concepts = W_temp.shape[1]  # (n_classes, n_concepts)
+                print(f"Inferred {n_concepts} concepts from W_c.pt shape: {W_temp.shape}")
+    
+    # 3. Try config file keys
+    if n_concepts is None:
+        for key in ["n_concepts", "num_concepts_initial", "num_concepts"]:
+            if key in config:
+                n_concepts = config[key]
+                print(f"Using {n_concepts} concepts from config['{key}']")
+                break
+    
+    # 4. Fallback: load from input concept file
+    if n_concepts is None:
+        print(f"Warning: Could not determine concept count from model, loading from {args.concepts}")
+        concept_names = load_concepts(args.concepts)
+        n_concepts = len(concept_names)
+        print(f"Using {n_concepts} concepts from input file")
+    
     
     # Load backbone
     backbone_model = get_model(args.backbone, num_classes=12, pretrained=False)
@@ -184,13 +218,58 @@ def load_vlg_cbm_model(args, device):
 
 def load_lf_cbm_model(args, device):
     """Load Label-Free CBM model components."""
+    # Get number of concepts - try multiple sources
+    n_concepts = None
+    
+    # 1. Try to load from model directory's concepts.txt (most reliable)
+    model_concepts_path = os.path.join(args.model_dir, "concepts.txt")
+    if os.path.exists(model_concepts_path):
+        with open(model_concepts_path) as f:
+            n_concepts = sum(1 for line in f if line.strip())
+        print(f"Loaded {n_concepts} concepts from {model_concepts_path}")
+    
+    # 2. Try to infer from W_c.pt shape
+    if n_concepts is None:
+        W_path = os.path.join(args.model_dir, "W_c.pt")
+        if os.path.exists(W_path):
+            W_temp = torch.load(W_path, map_location='cpu', weights_only=False)
+            if isinstance(W_temp, torch.Tensor):
+                n_concepts = W_temp.shape[1]  # (n_classes, n_concepts)
+                print(f"Inferred {n_concepts} concepts from W_c.pt shape: {W_temp.shape}")
+    
+    # 3. Try to infer from concept_proj.pt
+    if n_concepts is None:
+        proj_path = os.path.join(args.model_dir, "concept_proj.pt")
+        if os.path.exists(proj_path):
+            proj_state = torch.load(proj_path, map_location='cpu', weights_only=False)
+            if "n_concepts" in proj_state:
+                n_concepts = proj_state["n_concepts"]
+                print(f"Using {n_concepts} concepts from concept_proj.pt")
+            else:
+                # Infer from state_dict shape
+                state_dict = proj_state.get("state_dict", proj_state)
+                if "weight" in state_dict:
+                    n_concepts = state_dict["weight"].shape[0]
+                    print(f"Inferred {n_concepts} concepts from projection layer shape")
+    
+    # 4. Fallback: load from input concept file
+    if n_concepts is None:
+        print(f"Warning: Could not determine concept count from model, loading from {args.concepts}")
+        concept_names = load_concepts(args.concepts)
+        n_concepts = len(concept_names)
+        print(f"Using {n_concepts} concepts from input file")
+    
     # Load concept projection layer
     proj_path = os.path.join(args.model_dir, "concept_proj.pt")
     proj_state = torch.load(proj_path, map_location=device, weights_only=False)
     
-    n_concepts = proj_state["n_concepts"]
     proj_layer = nn.Linear(1024, n_concepts)  # Assuming DenseNet
-    proj_layer.load_state_dict(proj_state["state_dict"])
+    
+    # Load state dict properly
+    if "state_dict" in proj_state:
+        proj_layer.load_state_dict(proj_state["state_dict"])
+    else:
+        proj_layer.load_state_dict(proj_state)
     
     # Load backbone
     backbone_model = get_model(args.backbone, num_classes=12, pretrained=False)
