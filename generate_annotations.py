@@ -47,6 +47,8 @@ from tqdm import tqdm
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 import functools
+from pydicom import dcmread
+from pydicom.pixel_data_handlers.util import apply_modality_lut
 
 # Add project paths
 PROJECT_ROOT = Path(__file__).parent
@@ -98,7 +100,17 @@ def load_concepts(
 
 def preprocess_image_for_chex(image_path: str, target_size: int = 224):
     """Load and preprocess image for ChEX."""
-    img = Image.open(image_path).convert('L')  # Grayscale
+    ext = os.path.splitext(image_path)[1].lower()
+    if ext in {'.dcm', '.dicom'}:
+        dicom = dcmread(image_path)
+        pixel_array = dicom.pixel_array
+        pixel_array = apply_modality_lut(pixel_array, dicom)
+        pixel_array = np.asarray(pixel_array, dtype=np.float32)
+        pixel_array = pixel_array - pixel_array.min()
+        pixel_array = pixel_array / (pixel_array.max() + 1e-8) * 255.0
+        img = Image.fromarray(pixel_array.astype(np.uint8)).convert('L')
+    else:
+        img = Image.open(image_path).convert('L')  # Grayscale
     orig_size = img.size
     img_resized = img.resize((target_size, target_size), Image.BILINEAR)
     
@@ -274,7 +286,7 @@ def main():
     parser.add_argument("--img_root", type=str, default=None,
                         help="Root directory for images; defaults to the parent of --data_dir")
     parser.add_argument("--label_set", type=str, default="chexpert",
-                        choices=["chexpert", "covidqu"],
+                        choices=["chexpert", "covidqu", "vindr"],
                         help="Dataset label set")
     parser.add_argument("--covidqu_variant", type=str, default="infection",
                         choices=["infection", "lung"],
@@ -283,8 +295,8 @@ def main():
                         default="concepts/chexpert_concepts.json",
                         help="Path to concepts file (JSON or TXT)")
     parser.add_argument("--split", type=str, default="train",
-                        choices=["train", "val"],
-                        help="Dataset split")
+                        choices=["train", "val", "test"],
+                        help="Dataset split (CheXpert: train/val, COVID-QU: train/val, VinDr: train/test)")
     parser.add_argument("--concept_subset", type=str, default="pathology",
                         choices=["all", "pathology", "competition", "custom"],
                         help="Subset of labels whose concepts should be used (CheXpert only; ignored for TXT or COVID-QU)")
@@ -365,6 +377,45 @@ def main():
         get_transforms,
     )
 
+    class VinDrImageFolder:
+        """Simple image list loader for VinDr-CXR (DICOM or image files)."""
+
+        def __init__(self, root: str):
+            exts = {".dcm", ".dicom", ".jpg", ".jpeg", ".png"}
+            self.files = []
+            for fname in os.listdir(root):
+                if fname.startswith("."):
+                    continue
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in exts:
+                    self.files.append(os.path.join(root, fname))
+            if not self.files:
+                raise RuntimeError(f"No images found under {root}")
+            self.files.sort()
+
+        def __len__(self):
+            return len(self.files)
+
+        def __getitem__(self, idx):
+            return self._load_image(self.files[idx])
+
+        def _load_image(self, path: str) -> Image.Image:
+            ext = os.path.splitext(path)[1].lower()
+            if ext in {".dcm", ".dicom"}:
+                dicom = dcmread(path)
+                pixel_array = dicom.pixel_array
+                pixel_array = apply_modality_lut(pixel_array, dicom)
+                pixel_array = np.asarray(pixel_array, dtype=np.float32)
+                pixel_array = np.clip(pixel_array, 0, 255)
+                image = Image.fromarray(pixel_array.astype(np.uint8))
+                return image.convert("RGB")
+            return Image.open(path).convert("RGB")
+
+        def get_image_path(self, idx: int) -> str:
+            if idx < 0 or idx >= len(self.files):
+                raise IndexError(f"Index {idx} out of range for dataset of size {len(self.files)}")
+            return self.files[idx]
+
     if args.concept_subset == "custom" and not args.custom_concept_labels:
         parser.error("--custom_concept_labels is required when using concept_subset=custom")
 
@@ -397,18 +448,24 @@ def main():
     transform = get_transforms(224, is_training=False)
 
     if args.label_set == "covidqu":
+        split_name = "Train" if args.split == "train" else "Val" if args.split == "val" else "Test"
         dataset = CovidQUDataset(
             root=args.data_dir,
-            split="Train" if args.split == "train" else "Val",
+            split=split_name,
             transform=transform,
             variant=args.covidqu_variant
         )
+    elif args.label_set == "vindr":
+        split_dir = os.path.join(args.data_dir, args.split)
+        dataset = VinDrImageFolder(split_dir)
     else:
         if args.csv_path:
             csv_path = args.csv_path
         else:
             if args.split == "train":
                 csv_path = os.path.join(args.data_dir, "train.csv")
+            elif args.split == "test":
+                csv_path = os.path.join(args.data_dir, "test.csv")
             else:
                 csv_path = os.path.join(args.data_dir, "valid.csv")
 
