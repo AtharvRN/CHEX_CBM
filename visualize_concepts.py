@@ -491,7 +491,7 @@ def visualize_disease_attribution(
             
             # Original image
             ax1 = plt.subplot(1, 3, 1)
-            img_np = image.squeeze().cpu().numpy()
+            img_np = image.squeeze().detach().cpu().numpy()
             if img_np.shape[0] == 3:
                 img_np = np.transpose(img_np, (1, 2, 0))
             img_display = (img_np - img_np.min()) / (img_np.max() - img_np.min() + 1e-8)
