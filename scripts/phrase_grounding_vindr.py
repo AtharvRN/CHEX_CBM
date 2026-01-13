@@ -27,6 +27,7 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import torch
@@ -95,6 +96,7 @@ def parse_args() -> argparse.Namespace:
         help="Template to form the grounding question",
     )
     ap.add_argument("--cache_dir", default=None, help="Directory to cache converted DICOM images (default: <image_root>/../vindr_converted)")
+    ap.add_argument("--num_workers", type=int, default=8, help="Number of parallel workers for DICOM conversion")
     return ap.parse_args()
 
 
@@ -163,31 +165,6 @@ def extract_boxes(text: str, img_width: int = None, img_height: int = None) -> L
     return boxes
 
 
-def extract_response_text(response: Any) -> str:
-    """Normalize model output into a single text string."""
-    if isinstance(response, str):
-        return response
-    if isinstance(response, dict):
-        content = response.get("content") or response.get("text") or response.get("generated_text")
-        if isinstance(content, str):
-            return content
-        return json.dumps(response, ensure_ascii=False)
-    if isinstance(response, list):
-        # If list of chat messages, return last assistant text.
-        for item in reversed(response):
-            if isinstance(item, dict) and item.get("role") == "assistant":
-                content = item.get("content")
-                if isinstance(content, list):
-                    parts = [c.get("text", "") for c in content if isinstance(c, dict)]
-                    return " ".join(p for p in parts if p)
-                if isinstance(content, str):
-                    return content
-        # Fallback: join any string fragments
-        parts = [str(item) for item in response]
-        return " ".join(parts)
-    return str(response)
-
-
 def list_to_box_tuple(box_str: str) -> List[int]:
     clean = box_str.replace("(", "").replace(")", "")
     return [int(float(x)) for x in clean.split(",")]
@@ -245,12 +222,11 @@ def run_medgemma(samples: List[Dict[str, Any]], pipe, max_new_tokens: int) -> Li
         ]
         out = pipe(text=messages, max_new_tokens=max_new_tokens)
         response = out[0]["generated_text"] if isinstance(out, list) else out
-        response_text = extract_response_text(response)
 
         ref_box = sample["reference_box"]
         img_width = sample.get("image_width")
         img_height = sample.get("image_height")
-        cand_boxes = extract_boxes(response_text, img_width, img_height)
+        cand_boxes = extract_boxes(response, img_width, img_height) if isinstance(response, str) else []
         if not cand_boxes:
             cand_boxes = last if last else [[0, 0, 0, 0]]
         else:
@@ -258,7 +234,6 @@ def run_medgemma(samples: List[Dict[str, Any]], pipe, max_new_tokens: int) -> Li
         cand_box = cand_boxes[0]
         sample["candidate_box"] = cand_box
         sample["raw_response"] = response
-        sample["raw_response_text"] = response_text
         iou = bbox_iou(torch.tensor([ref_box]), torch.tensor([cand_box])).item()
         sample["iou"] = iou
     return samples
@@ -285,15 +260,15 @@ def build_samples(args: argparse.Namespace) -> List[Dict[str, Any]]:
     os.makedirs(cache_dir, exist_ok=True)
     print(f"Using cache directory for converted images: {cache_dir}")
     
-    samples = []
-    converted_count = 0
-    skipped_count = 0
-    missing_count = 0
+    # First pass: collect all images that need conversion
+    conversion_tasks = []
+    samples_data = []
     
-    for _, r in tqdm(df.iterrows(), total=len(df), desc="Processing images"):
+    for _, r in df.iterrows():
         # Skip rows with NaN values in bounding box coordinates
         if pd.isna(r.x_min) or pd.isna(r.y_min) or pd.isna(r.x_max) or pd.isna(r.y_max):
             continue
+        
         img_path = os.path.join(args.image_root, f"{r.image_id}{args.image_suffix}")
         is_dicom_file = args.image_suffix.lower() in {'.dcm', '.dicom'}
         if not os.path.exists(img_path):
@@ -302,24 +277,66 @@ def build_samples(args: argparse.Namespace) -> List[Dict[str, Any]]:
         
         # Skip if image doesn't exist
         if not os.path.exists(img_path):
+            continue
+        
+        cached_png = os.path.join(cache_dir, f"{r.image_id}.png")
+        
+        # Check if conversion is needed
+        if (img_path.lower().endswith(('.dcm', '.dicom')) or is_dicom_file) and not os.path.exists(cached_png):
+            conversion_tasks.append((img_path, cached_png))
+        
+        samples_data.append({
+            'row': r,
+            'img_path': img_path,
+            'cached_png': cached_png,
+            'is_dicom': img_path.lower().endswith(('.dcm', '.dicom')) or is_dicom_file
+        })
+    
+    # Parallel DICOM conversion
+    converted_count = 0
+    if conversion_tasks:
+        print(f"\nConverting {len(conversion_tasks)} DICOM files using {args.num_workers} workers...")
+        with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
+            futures = {executor.submit(convert_dicom_to_image, src, dst): (src, dst) 
+                      for src, dst in conversion_tasks}
+            
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Converting DICOMs"):
+                try:
+                    future.result()
+                    converted_count += 1
+                except Exception as e:
+                    src, dst = futures[future]
+                    print(f"\nError converting {src}: {e}")
+    
+    skipped_count = len([s for s in samples_data if s['is_dicom']]) - converted_count
+    
+    # Second pass: build samples with image dimensions
+    print("\nBuilding samples with image dimensions...")
+    samples = []
+    missing_count = 0
+    
+    for sample_data in tqdm(samples_data, desc="Building samples"):
+        r = sample_data['row']
+        
+        # Determine final image path
+        if sample_data['is_dicom']:
+            img_path = sample_data['cached_png']
+        else:
+            img_path = sample_data['img_path']
+        
+        if not os.path.exists(img_path):
             missing_count += 1
             continue
         
-        # Convert DICOM to PNG if needed (check both extension and whether we expected DICOM)
-        if img_path.lower().endswith(('.dcm', '.dicom')) or is_dicom_file:
-            cached_png = os.path.join(cache_dir, f"{r.image_id}.png")
-            # Only convert if not already cached
-            if not os.path.exists(cached_png):
-                img_path = convert_dicom_to_image(img_path, cached_png)
-                converted_count += 1
-            else:
-                img_path = cached_png
-                skipped_count += 1
-        
         # Get original image dimensions for coordinate scaling
         from PIL import Image as PILImage
-        with PILImage.open(img_path) as pil_img:
-            img_width, img_height = pil_img.size
+        try:
+            with PILImage.open(img_path) as pil_img:
+                img_width, img_height = pil_img.size
+        except Exception as e:
+            print(f"\nError reading {img_path}: {e}")
+            missing_count += 1
+            continue
         
         ref_box = [int(r.x_min), int(r.y_min), int(r.x_max), int(r.y_max)]
         question = args.question_template.format(label=str(r.class_name))
