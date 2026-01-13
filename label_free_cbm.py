@@ -103,7 +103,7 @@ def parse_args():
     parser.add_argument("--backbone_ckpt", type=str, default=None,
                         help="Path to finetuned backbone checkpoint")
     parser.add_argument("--clip_name", type=str, default="biomedclip",
-                        choices=["biomedclip", "xrayclip", "chexpertzero"],
+                        choices=["biomedclip", "xrayclip", "medsiglip", "chexpertzero"],
                         help="CLIP model to use")
     parser.add_argument("--chexpertzero_checkpoint", type=str, default="stanford-chexpert/chexpert-zero",
                         help="HuggingFace repo/checkpoint for CheXpertZero")
@@ -237,6 +237,40 @@ class XrayCLIPEncoder:
         features = self.model.get_image_features(pixel_values=pixel_values)
         return features.cpu()
     
+    @torch.no_grad()
+    def encode_texts(self, texts: list) -> torch.Tensor:
+        inputs = self.processor(text=texts, padding=True, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        features = self.model.get_text_features(**inputs)
+        return features.cpu()
+
+
+class MedSigLIPEncoder:
+    """
+    Wrapper for google/medsiglip-448.
+    Provides the same encode_images/encode_texts interface.
+    """
+    MODEL_ID = "google/medsiglip-448"
+
+    def __init__(self, device: str = "cuda"):
+        try:
+            from transformers import SiglipModel, SiglipProcessor
+        except ImportError as exc:
+            raise RuntimeError("transformers not installed or too old for SigLIP") from exc
+
+        self.device = device
+        self.processor = SiglipProcessor.from_pretrained(self.MODEL_ID)
+        self.model = SiglipModel.from_pretrained(self.MODEL_ID)
+        self.model = self.model.to(device).eval()
+
+    @torch.no_grad()
+    def encode_images(self, images: torch.Tensor) -> torch.Tensor:
+        pil_images = tensor_batch_to_pil(images)
+        inputs = self.processor(images=pil_images, return_tensors="pt")
+        pixel_values = inputs["pixel_values"].to(self.device)
+        features = self.model.get_image_features(pixel_values=pixel_values)
+        return features.cpu()
+
     @torch.no_grad()
     def encode_texts(self, texts: list) -> torch.Tensor:
         inputs = self.processor(text=texts, padding=True, return_tensors="pt")
@@ -716,9 +750,15 @@ def main():
     if args.clip_name == "biomedclip":
         clip_encoder = BiomedCLIPEncoder(device)
         print("BiomedCLIP loaded")
-    else:
+    elif args.clip_name == "xrayclip":
         clip_encoder = XrayCLIPEncoder(device)
         print("XrayCLIP (SigLIP) loaded")
+    elif args.clip_name == "medsiglip":
+        clip_encoder = MedSigLIPEncoder(device)
+        print("MedSigLIP loaded")
+    else:
+        clip_encoder = CheXpertZeroEncoder(args.chexpertzero_checkpoint, device=device)
+        print("CheXpertZero loaded")
     
     # =========================================
     # Compute activations

@@ -24,12 +24,44 @@ import copy
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List
 
+import numpy as np
 import torch
 import pandas as pd
+from PIL import Image
+from pydicom import dcmread
+from pydicom.pixel_data_handlers.util import apply_modality_lut
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+
+
+def convert_dicom_to_image(dicom_path: str, output_path: str) -> str:
+    """Convert DICOM file to PNG image that CheXagent can read."""
+    ext = os.path.splitext(dicom_path)[1].lower()
+    if ext not in {'.dcm', '.dicom'}:
+        # Not a DICOM file, return original path
+        return dicom_path
+    
+    # Load DICOM
+    dicom = dcmread(dicom_path)
+    pixel_array = dicom.pixel_array
+    pixel_array = apply_modality_lut(pixel_array, dicom)
+    pixel_array = np.asarray(pixel_array, dtype=np.float32)
+    
+    # Normalize to 0-255
+    pixel_array = pixel_array - pixel_array.min()
+    pixel_array = pixel_array / (pixel_array.max() + 1e-8) * 255.0
+    
+    # Convert to PIL Image and save
+    img = Image.fromarray(pixel_array.astype(np.uint8))
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    img.save(output_path)
+    
+    return output_path
 
 
 def bbox_iou(box1: torch.Tensor, box2: torch.Tensor) -> torch.Tensor:
@@ -62,6 +94,7 @@ def parse_args() -> argparse.Namespace:
         default="Please locate the following phrase: {label} is present.",
         help="Template to form the grounding question",
     )
+    ap.add_argument("--cache_dir", default=None, help="Directory to cache converted DICOM images (default: <image_root>/../vindr_converted)")
     return ap.parse_args()
 
 
@@ -86,12 +119,73 @@ _BOX_RE = re.compile(
     r"\(?\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)?"
 )
 
+# Additional pattern for coordinate pairs like (x1,y1),(x2,y2) or (x1,y1), (x2,y2)
+_BOX_PAIR_RE = re.compile(
+    r"\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)\s*,?\s*\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)"
+)
 
-def extract_boxes(text: str) -> List[List[int]]:
+
+def extract_boxes(text: str, img_width: int = None, img_height: int = None) -> List[List[int]]:
+    """Extract boxes from text and optionally scale from normalized coords (0-100) to pixels."""
     boxes = []
-    for m in _BOX_RE.finditer(text):
-        boxes.append([int(float(m.group(i))) for i in range(1, 5)])
+    
+    # Try coordinate pair format first: (x1,y1),(x2,y2)
+    for m in _BOX_PAIR_RE.finditer(text):
+        x1, y1, x2, y2 = [float(m.group(i)) for i in range(1, 5)]
+        
+        # If coordinates look normalized (0-100 range) and we have image dimensions, scale them
+        if img_width and img_height and all(0 <= c <= 100 for c in [x1, y1, x2, y2]):
+            x1 = int(x1 * img_width / 100)
+            y1 = int(y1 * img_height / 100)
+            x2 = int(x2 * img_width / 100)
+            y2 = int(y2 * img_height / 100)
+        else:
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+        
+        boxes.append([x1, y1, x2, y2])
+    
+    # If no pairs found, try standard format: x1,y1,x2,y2 or (x1,y1,x2,y2)
+    if not boxes:
+        for m in _BOX_RE.finditer(text):
+            x1, y1, x2, y2 = [float(m.group(i)) for i in range(1, 5)]
+            
+            # Scale if normalized
+            if img_width and img_height and all(0 <= c <= 100 for c in [x1, y1, x2, y2]):
+                x1 = int(x1 * img_width / 100)
+                y1 = int(y1 * img_height / 100)
+                x2 = int(x2 * img_width / 100)
+                y2 = int(y2 * img_height / 100)
+            else:
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            
+            boxes.append([x1, y1, x2, y2])
+    
     return boxes
+
+
+def extract_response_text(response: Any) -> str:
+    """Normalize model output into a single text string."""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        content = response.get("content") or response.get("text") or response.get("generated_text")
+        if isinstance(content, str):
+            return content
+        return json.dumps(response, ensure_ascii=False)
+    if isinstance(response, list):
+        # If list of chat messages, return last assistant text.
+        for item in reversed(response):
+            if isinstance(item, dict) and item.get("role") == "assistant":
+                content = item.get("content")
+                if isinstance(content, list):
+                    parts = [c.get("text", "") for c in content if isinstance(c, dict)]
+                    return " ".join(p for p in parts if p)
+                if isinstance(content, str):
+                    return content
+        # Fallback: join any string fragments
+        parts = [str(item) for item in response]
+        return " ".join(parts)
+    return str(response)
 
 
 def list_to_box_tuple(box_str: str) -> List[int]:
@@ -101,7 +195,7 @@ def list_to_box_tuple(box_str: str) -> List[int]:
 
 def run_chexagent(samples: List[Dict[str, Any]], tok, mdl, max_new_tokens: int) -> List[Dict[str, Any]]:
     last = []
-    for sample in samples:
+    for sample in tqdm(samples, desc="Running CheXagent inference"):
         paths = sample["image_path"]
         prompt = sample["question"]
         query = tok.from_list_format([*[{ "image": p } for p in paths], {"text": prompt}])
@@ -122,7 +216,9 @@ def run_chexagent(samples: List[Dict[str, Any]], tok, mdl, max_new_tokens: int) 
         response = tok.decode(gen[input_ids.size(1) : -1])
 
         ref_box = sample["reference_box"]
-        cand_boxes = extract_boxes(response)
+        img_width = sample.get("image_width")
+        img_height = sample.get("image_height")
+        cand_boxes = extract_boxes(response, img_width, img_height)
         if not cand_boxes:
             cand_boxes = last if last else [[0, 0, 0, 0]]
         else:
@@ -137,7 +233,7 @@ def run_chexagent(samples: List[Dict[str, Any]], tok, mdl, max_new_tokens: int) 
 
 def run_medgemma(samples: List[Dict[str, Any]], pipe, max_new_tokens: int) -> List[Dict[str, Any]]:
     last = []
-    for sample in samples:
+    for sample in tqdm(samples, desc="Running MedGemma inference"):
         prompt = sample["question"]
         messages = [
             {"role": "system", "content": [{"type": "text", "text": "You are a helpful assistant."}]},
@@ -149,9 +245,12 @@ def run_medgemma(samples: List[Dict[str, Any]], pipe, max_new_tokens: int) -> Li
         ]
         out = pipe(text=messages, max_new_tokens=max_new_tokens)
         response = out[0]["generated_text"] if isinstance(out, list) else out
+        response_text = extract_response_text(response)
 
         ref_box = sample["reference_box"]
-        cand_boxes = extract_boxes(response) if isinstance(response, str) else []
+        img_width = sample.get("image_width")
+        img_height = sample.get("image_height")
+        cand_boxes = extract_boxes(response_text, img_width, img_height)
         if not cand_boxes:
             cand_boxes = last if last else [[0, 0, 0, 0]]
         else:
@@ -159,6 +258,7 @@ def run_medgemma(samples: List[Dict[str, Any]], pipe, max_new_tokens: int) -> Li
         cand_box = cand_boxes[0]
         sample["candidate_box"] = cand_box
         sample["raw_response"] = response
+        sample["raw_response_text"] = response_text
         iou = bbox_iou(torch.tensor([ref_box]), torch.tensor([cand_box])).item()
         sample["iou"] = iou
     return samples
@@ -170,12 +270,57 @@ def build_samples(args: argparse.Namespace) -> List[Dict[str, Any]]:
     if not required.issubset(df.columns):
         missing = required - set(df.columns)
         raise ValueError(f"Annotations CSV missing columns: {missing}")
+    
+    # Apply limit early if specified
+    if args.limit:
+        df = df.head(args.limit)
+        print(f"Limiting to first {len(df)} samples")
+    
+    # Create permanent cache directory for converted DICOM files
+    if args.cache_dir:
+        cache_dir = args.cache_dir
+    else:
+        cache_dir = os.path.join(os.path.dirname(args.image_root.rstrip('/')), "vindr_converted")
+    
+    os.makedirs(cache_dir, exist_ok=True)
+    print(f"Using cache directory for converted images: {cache_dir}")
+    
     samples = []
-    for _, r in df.iterrows():
+    converted_count = 0
+    skipped_count = 0
+    missing_count = 0
+    
+    for _, r in tqdm(df.iterrows(), total=len(df), desc="Processing images"):
+        # Skip rows with NaN values in bounding box coordinates
+        if pd.isna(r.x_min) or pd.isna(r.y_min) or pd.isna(r.x_max) or pd.isna(r.y_max):
+            continue
         img_path = os.path.join(args.image_root, f"{r.image_id}{args.image_suffix}")
+        is_dicom_file = args.image_suffix.lower() in {'.dcm', '.dicom'}
         if not os.path.exists(img_path):
             # fallback: try without suffix
             img_path = os.path.join(args.image_root, str(r.image_id))
+        
+        # Skip if image doesn't exist
+        if not os.path.exists(img_path):
+            missing_count += 1
+            continue
+        
+        # Convert DICOM to PNG if needed (check both extension and whether we expected DICOM)
+        if img_path.lower().endswith(('.dcm', '.dicom')) or is_dicom_file:
+            cached_png = os.path.join(cache_dir, f"{r.image_id}.png")
+            # Only convert if not already cached
+            if not os.path.exists(cached_png):
+                img_path = convert_dicom_to_image(img_path, cached_png)
+                converted_count += 1
+            else:
+                img_path = cached_png
+                skipped_count += 1
+        
+        # Get original image dimensions for coordinate scaling
+        from PIL import Image as PILImage
+        with PILImage.open(img_path) as pil_img:
+            img_width, img_height = pil_img.size
+        
         ref_box = [int(r.x_min), int(r.y_min), int(r.x_max), int(r.y_max)]
         question = args.question_template.format(label=str(r.class_name))
         samples.append(
@@ -185,16 +330,20 @@ def build_samples(args: argparse.Namespace) -> List[Dict[str, Any]]:
                 "reference_box": ref_box,
                 "class_name": r.class_name,
                 "image_id": r.image_id,
+                "image_width": img_width,
+                "image_height": img_height,
             }
         )
+    
+    print(f"\nConverted {converted_count} new images, reused {skipped_count} cached images")
+    if missing_count > 0:
+        print(f"Warning: Skipped {missing_count} samples due to missing image files")
     return samples
 
 
 def main():
     args = parse_args()
     samples = build_samples(args)
-    if args.limit:
-        samples = samples[: args.limit]
 
     if args.model_backend == "chexagent":
         tok, mdl = load_chexagent(args.model_id)
