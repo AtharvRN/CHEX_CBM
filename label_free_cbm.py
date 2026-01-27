@@ -90,10 +90,10 @@ def parse_args():
     parser.add_argument("--competition_labels", action="store_true",
                         help="Use only 5 competition labels")
     parser.add_argument("--uncertain_strategy", type=str, default="ones",
-                        choices=["ones", "zeros"],
-                        help="How to handle uncertain labels")
-    parser.add_argument("--limit_samples", type=int, default=10000,
-                        help="Limit training samples")
+                        choices=["ones", "zeros", "ignore"],
+                        help="How to handle uncertain labels (-1) in CheXpert CSVs")
+    parser.add_argument("--limit_samples", type=int, default=None,
+                        help="Limit training samples (default: use all)")
     parser.add_argument("--seed", type=int, default=42)
     
     # Models
@@ -102,6 +102,10 @@ def parse_args():
                         help="Backbone model for feature extraction")
     parser.add_argument("--backbone_ckpt", type=str, default=None,
                         help="Path to finetuned backbone checkpoint")
+    parser.add_argument("--pretrained", action="store_true", default=True,
+                        help="Use pretrained backbone weights (default: True)")
+    parser.add_argument("--no-pretrained", dest="pretrained", action="store_false",
+                        help="Disable pretrained weights (train backbone from scratch)")
     parser.add_argument("--clip_name", type=str, default="biomedclip",
                         choices=["biomedclip", "xrayclip", "medsiglip", "chexpertzero"],
                         help="CLIP model to use")
@@ -306,13 +310,13 @@ class CheXpertZeroEncoder:
 class BackboneEncoder(nn.Module):
     """Wrapper for backbone model feature extraction."""
     
-    def __init__(self, model_name: str, checkpoint: str = None, device: str = "cuda", use_data_parallel: bool = False):
+    def __init__(self, model_name: str, checkpoint: str = None, device: str = "cuda", use_data_parallel: bool = False, pretrained: bool = True):
         super().__init__()
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.use_data_parallel = use_data_parallel
         
         # Get the model without the final classifier
-        self.model = get_model(model_name, num_classes=1, pretrained=True)
+        self.model = get_model(model_name, num_classes=1, pretrained=pretrained)
         # Underlying torchvision backbone (DenseNet/ResNet) may hang off .backbone
         self.backbone = getattr(self.model, 'backbone', self.model)
         
@@ -418,12 +422,18 @@ def compute_and_cache_activations(
     print(f"Computing activations for {len(dataset)} images...")
     
     # Create loader
+    def _seed_worker(worker_id):
+        worker_seed = torch.initial_seed() % 2**32
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=True,
+        worker_init_fn=_seed_worker
     )
     
     backbone_features = []
@@ -742,7 +752,8 @@ def main():
         args.backbone,
         args.backbone_ckpt,
         device,
-        use_data_parallel=args.use_data_parallel
+        use_data_parallel=args.use_data_parallel,
+        pretrained=args.pretrained
     )
     print(f"Backbone: {args.backbone}, feature_dim={backbone.feature_dim}")
     

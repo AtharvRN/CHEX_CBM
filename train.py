@@ -72,7 +72,9 @@ def parse_args():
                         choices=["ones", "zeros", "ignore"],
                         help="How to handle uncertain labels (-1)")
     parser.add_argument("--frontal_only", action="store_true", default=True,
-                        help="Use only frontal views")
+                        help="Use only frontal views (default: True)")
+    parser.add_argument("--no-frontal_only", dest="frontal_only", action="store_false",
+                        help="Include lateral views as well")
     parser.add_argument("--limit_samples", type=int, default=None,
                         help="Limit training samples (for debugging/testing)")
     parser.add_argument("--seed", type=int, default=42,
@@ -82,7 +84,9 @@ def parse_args():
     parser.add_argument("--model", type=str, default="densenet121",
                         help="Model architecture: densenet121, resnet50, or xrv-* (e.g., xrv-all, xrv-chex)")
     parser.add_argument("--pretrained", action="store_true", default=True,
-                        help="Use pretrained weights (ImageNet for standard, chest X-ray for XRV)")
+                        help="Use pretrained weights (ImageNet for standard, chest X-ray for XRV; default: True)")
+    parser.add_argument("--no-pretrained", dest="pretrained", action="store_false",
+                        help="Disable pretrained weights (train from scratch)")
     parser.add_argument("--use_xrv_head", action="store_true",
                         help="For XRV models: use pretrained classifier head instead of new one")
     parser.add_argument("--dropout", type=float, default=0.0,
@@ -432,12 +436,12 @@ def main():
     print("="*60)
     
     history_path = os.path.join(args.output, "history.json")
-    history, best_auroc = load_history(history_path)
+    history, best_metric_so_far = load_history(history_path)
     print("\nEvaluating initial model...")
     metrics, val_targets, val_preds = evaluate(model, val_loader, device, labels, args.single_label)
     if args.single_label:
         print(f"Initial Val Accuracy: {metrics['accuracy']:.4f}")
-        best_metric = metrics['accuracy']
+        current_metric = metrics['accuracy']
     else:
         initial_aurocs = metrics['auroc']
         initial_aps = metrics['ap']
@@ -447,8 +451,8 @@ def main():
         print("Per-class AUROC:")
         for label in labels:
             print(f"  {label}: AUROC={initial_aurocs[label]:.4f}, AP={initial_aps[label]:.4f}")
-        best_metric = mean_auroc
-    best_auroc = max(best_auroc, best_metric)
+        current_metric = mean_auroc
+    best_metric = max(best_metric_so_far, current_metric)
     for epoch in range(1, args.epochs + 1):
         print(f"\nEpoch {epoch}/{args.epochs}")
         print("-" * 40)
@@ -505,7 +509,7 @@ def main():
         
         # Log to wandb
         if WANDB_AVAILABLE and wandb_run and not args.single_label:
-            log_to_wandb(epoch, train_loss, val_aurocs, val_aps, current_lr, labels, best_auroc)
+            log_to_wandb(epoch, train_loss, val_aurocs, val_aps, current_lr, labels, best_metric)
         
         # Generate plots periodically
         if args.save_plots and epoch % args.plot_every == 0 and not args.single_label:
@@ -514,30 +518,32 @@ def main():
         
         # Save best model
         metric_to_track = val_acc if args.single_label else mean_auroc
-        if metric_to_track > best_auroc:
-            best_auroc = metric_to_track
+        if metric_to_track > best_metric:
+            best_metric = metric_to_track
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'best_auroc': best_auroc,
+                'best_metric': best_metric,
+                'best_auroc': best_metric,  # backward compatibility
                 'config': config
             }, os.path.join(args.output, "best_model.pth"))
             tag = "Accuracy" if args.single_label else "AUROC"
-            print(f"*** New best model saved with {tag}: {best_auroc:.4f} ***")
+            print(f"*** New best model saved with {tag}: {best_metric:.4f} ***")
             
             # Save best predictions
             np.save(os.path.join(args.output, "best_val_predictions.npy"), val_preds)
             np.save(os.path.join(args.output, "best_val_targets.npy"), val_targets)
         
         # Save latest model
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'best_auroc': best_auroc,
-            'config': config
-        }, os.path.join(args.output, "latest_model.pth"))
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_metric': best_metric,
+                'best_auroc': best_metric,  # backward compatibility
+                'config': config
+            }, os.path.join(args.output, "latest_model.pth"))
     
     # Save training history
     with open(os.path.join(args.output, "history.json"), 'w') as f:
@@ -577,7 +583,7 @@ def main():
     # Finish wandb run
     if WANDB_AVAILABLE and wandb_run:
         # Log final summary
-        wandb.run.summary['best_metric'] = best_auroc
+        wandb.run.summary['best_metric'] = best_metric
         wandb.run.summary['best_epoch'] = history[np.argmax([h.get('val_mean_auroc', h.get('val_acc', 0)) for h in history])]['epoch']
         
         # Save model artifact
@@ -590,7 +596,7 @@ def main():
     print("\n" + "="*60)
     print("Training complete!")
     tag = "Best Val Accuracy" if args.single_label else "Best Val AUROC"
-    print(f"{tag}: {best_auroc:.4f}")
+    print(f"{tag}: {best_metric:.4f}")
     print(f"Checkpoints saved to: {args.output}")
     if args.save_plots and not args.single_label:
         print(f"Plots saved to: {plots_dir}")
