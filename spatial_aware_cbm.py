@@ -43,17 +43,18 @@ from dataset import (
     get_transforms,
 )
 from models import get_model
+from utils.metrics import compute_all_metrics
 
 # CLIP encoders (reuse helpers from label_free_cbm style)
 try:
-    from open_clip import create_model_from_pretrained, get_tokenizer
+    from open_clip import create_model_from_pretrained, get_tokenizer, tokenize as oc_tokenize
     CLIP_AVAILABLE = True
 except ImportError:
     CLIP_AVAILABLE = False
     print("Warning: open_clip not available. Install with: pip install open_clip_torch")
 
 try:
-    from transformers import SiglipModel, SiglipProcessor
+    from transformers import AutoTokenizer, SiglipModel, SiglipProcessor
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
@@ -94,6 +95,7 @@ def parse_args():
     # Training
     p.add_argument("--epochs", type=int, default=5, help="CBL epochs")
     p.add_argument("--batch_size", type=int, default=8, help="Backbone/CBL batch size")
+    p.add_argument("--prompt_batch_size", type=int, default=64, help="Prompted image batch size for CLIP sims")
     p.add_argument("--num_workers", type=int, default=0)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--lam", type=float, default=0.0007, help="Sparsity reg for final layer")
@@ -128,25 +130,37 @@ class BiomedCLIP:
     def __init__(self, device):
         if not CLIP_AVAILABLE:
             raise RuntimeError("open_clip not installed")
+        if not TRANSFORMERS_AVAILABLE:
+            raise RuntimeError("transformers not installed")
         self.device = device
         self.model, self.preprocess = create_model_from_pretrained(
             "hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
         )
-        self.tokenizer = get_tokenizer(
-            "hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            "microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224"
         )
         self.model = self.model.to(device).eval()
 
     @torch.no_grad()
     def encode_texts(self, texts):
-        tok = self.tokenizer(texts).to(self.device)
-        return self.model.encode_text(tok).cpu()
+        # BiomedCLIP uses a HF text tower, so use the matching HF tokenizer
+        if isinstance(texts, str):
+            texts = [texts]
+        ctx_len = getattr(self.model, "context_length", None)
+        tok = self.tokenizer(
+            texts,
+            padding="max_length",
+            truncation=True,
+            max_length=ctx_len,
+            return_tensors="pt",
+        )["input_ids"].to(self.device)
+        return self.model.encode_text(tok)
 
     @torch.no_grad()
     def encode_images(self, pil_batch):
         tensors = torch.stack([self.preprocess(img) for img in pil_batch]).to(self.device)
         feats = self.model.encode_image(tensors)
-        return feats.cpu()
+        return feats
 
 
 class MedSigLIP:
@@ -164,14 +178,14 @@ class MedSigLIP:
         inputs = self.processor(text=texts, padding=True, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         feats = self.model.get_text_features(**inputs)
-        return feats.cpu()
+        return feats
 
     @torch.no_grad()
     def encode_images(self, pil_batch):
         inputs = self.processor(images=pil_batch, return_tensors="pt")
         pixel_values = inputs["pixel_values"].to(self.device)
         feats = self.model.get_image_features(pixel_values=pixel_values)
-        return feats.cpu()
+        return feats
 
 
 def tensor_to_pil(image_tensor: torch.Tensor) -> Image.Image:
@@ -190,7 +204,8 @@ def draw_prompt(pil_img: Image.Image, center: Tuple[int, int], radius: int) -> I
     return img
 
 
-def compute_spatial_sims(dataset, clip_enc, concepts, grid_h, grid_w, radius, cache_base, device, batch_size, num_workers, force_recompute):
+def compute_spatial_sims(dataset, clip_enc, concepts, grid_h, grid_w, radius, cache_base,
+                         device, data_batch_size, prompt_batch_size, num_workers, force_recompute):
     os.makedirs(os.path.dirname(cache_base), exist_ok=True)
     cache_path = cache_base + "_P.pt"
     if os.path.exists(cache_path) and not force_recompute:
@@ -199,31 +214,32 @@ def compute_spatial_sims(dataset, clip_enc, concepts, grid_h, grid_w, radius, ca
         return P
 
     print(f"Computing spatial similarities on grid {grid_h}x{grid_w} with radius {radius}...")
-    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=num_workers)
+    loader = DataLoader(dataset, batch_size=data_batch_size, shuffle=False, num_workers=num_workers)
 
-    text_emb = clip_enc.encode_texts(concepts)  # (M, d)
+    text_emb = clip_enc.encode_texts(concepts).to(device)  # (M, d)
     text_emb = F.normalize(text_emb, dim=1)
 
     all_P = []
-    for img_tensor, _ in tqdm(loader, desc="CLIP spatial sims"):
-        img_tensor = img_tensor.squeeze(0)  # (C,H,W)
-        pil = tensor_to_pil(img_tensor)
-        W, H = pil.size
-        xs = np.linspace(radius, W - radius - 1, grid_w).astype(int)
-        ys = np.linspace(radius, H - radius - 1, grid_h).astype(int)
-        sims = []
-        for y in ys:
-            row = []
-            for x in xs:
-                prompt_img = draw_prompt(pil, (x, y), radius)
-                img_emb = clip_enc.encode_images([prompt_img])  # (1,d)
+    for batch_imgs, _ in tqdm(loader, desc="CLIP spatial sims"):
+        B = batch_imgs.size(0)
+        for b in range(B):
+            img_tensor = batch_imgs[b]
+            pil = tensor_to_pil(img_tensor)
+            W, H = pil.size
+            xs = np.linspace(radius, W - radius - 1, grid_w).astype(int)
+            ys = np.linspace(radius, H - radius - 1, grid_h).astype(int)
+            prompts = [draw_prompt(pil, (x, y), radius) for y in ys for x in xs]
+
+            sims_chunks = []
+            for i in range(0, len(prompts), prompt_batch_size):
+                prompt_batch = prompts[i:i + prompt_batch_size]
+                img_emb = clip_enc.encode_images(prompt_batch)  # (Bchunk, d)
                 img_emb = F.normalize(img_emb, dim=1)
-                sim = (img_emb @ text_emb.T).squeeze(0)  # (M,)
-                row.append(sim)
-            row = torch.stack(row, dim=0)  # (grid_w, M)
-            sims.append(row)
-        sim_map = torch.stack(sims, dim=0)  # (grid_h, grid_w, M)
-        all_P.append(sim_map)
+                sim = img_emb.to(device) @ text_emb.T  # (Bchunk, M)
+                sims_chunks.append(sim.cpu())
+            sims = torch.cat(sims_chunks, dim=0)  # (grid_h*grid_w, M)
+            sim_map = sims.view(grid_h, grid_w, -1)  # (grid_h, grid_w, M)
+            all_P.append(sim_map)
 
     P = torch.stack(all_P, dim=0)  # (N, grid_h, grid_w, M)
     torch.save(P, cache_path)
@@ -298,30 +314,54 @@ def cbl_loss(pred_maps, target_maps):
     return -(sim ** 3).mean()
 
 
-def train_cbl(backbone, concept_layer, loader, P, device, epochs, lr, grid_h, grid_w, n_concepts):
+def train_cbl(backbone, concept_layer, train_loader, train_P, val_loader, val_P, device, epochs, lr, grid_h, grid_w, n_concepts):
     optimizer = torch.optim.Adam(concept_layer.parameters(), lr=lr)
     concept_layer.to(device)
     backbone.eval()
 
+    best_state = None
+    best_loss = float("inf")
+
     for epoch in range(epochs):
         running = 0.0
-        for i, (images, _) in enumerate(tqdm(loader, desc=f"CBL epoch {epoch+1}")):
+        for i, (images, _) in enumerate(tqdm(train_loader, desc=f"CBL epoch {epoch+1}")):
             images = images.to(device)
             feats = backbone(images)  # B,C,Hf,Wf
             concept_maps = concept_layer(feats)  # B,M,Hf,Wf
             concept_maps = F.interpolate(concept_maps, size=(grid_h, grid_w), mode="bilinear", align_corners=False)
-            target = P[i * loader.batch_size : i * loader.batch_size + images.size(0)].to(device)
+            target = train_P[i * train_loader.batch_size : i * train_loader.batch_size + images.size(0)].to(device)
 
             loss = cbl_loss(concept_maps, target)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             running += loss.item() * images.size(0)
-        print(f"[CBL] epoch {epoch+1}: loss {running/len(loader.dataset):.4f}")
+        epoch_loss = running / len(train_loader.dataset)
+
+        # Validation loss
+        with torch.no_grad():
+            val_running = 0.0
+            for j, (images, _) in enumerate(val_loader):
+                images = images.to(device)
+                feats = backbone(images)
+                concept_maps = concept_layer(feats)
+                concept_maps = F.interpolate(concept_maps, size=(grid_h, grid_w), mode="bilinear", align_corners=False)
+                target = val_P[j * val_loader.batch_size : j * val_loader.batch_size + images.size(0)].to(device)
+                vloss = cbl_loss(concept_maps, target)
+                val_running += vloss.item() * images.size(0)
+            val_loss = val_running / len(val_loader.dataset)
+
+        if val_loss < best_loss:
+            best_loss = val_loss
+            best_state = {k: v.cpu().clone() for k, v in concept_layer.state_dict().items()}
+        print(f"[CBL] epoch {epoch+1}: train {epoch_loss:.4f} | val {val_loss:.4f} (best {best_loss:.4f})")
+
+    if best_state is not None:
+        concept_layer.load_state_dict(best_state)
     return concept_layer
 
 
-def train_classifier(concept_layer, backbone, loader, num_classes, device, lam, saga_iters, saga_batch):
+def extract_global_concepts(concept_layer, backbone, loader, device):
     backbone.eval()
     concept_layer.eval()
     feats_list, labels_list = [], []
@@ -335,12 +375,26 @@ def train_classifier(concept_layer, backbone, loader, num_classes, device, lam, 
             labels_list.append(labels)
     X = torch.cat(feats_list, dim=0)
     Y = torch.cat(labels_list, dim=0)
+    return X, Y
 
-    is_single = Y.ndim == 1 or (Y.ndim == 2 and Y.size(1) == num_classes and Y.sum(dim=1).eq(1).all())
-    if is_single and Y.ndim > 1:
-        Y_cls = Y.argmax(dim=1)
+
+def train_classifier(concept_layer, backbone, train_loader, val_loader, num_classes, device, lam, saga_iters, saga_batch, labels, single_label):
+    X_train, Y_train = extract_global_concepts(concept_layer, backbone, train_loader, device)
+    X_val, Y_val = extract_global_concepts(concept_layer, backbone, val_loader, device)
+
+    # Standardize pooled concepts (match authors): compute train mean/std, apply to train/val
+    train_mean = X_train.mean(dim=0, keepdim=True)
+    train_std = X_train.std(dim=0, keepdim=True).clamp(min=1e-6)
+    X_train = (X_train - train_mean) / train_std
+    X_val = (X_val - train_mean) / train_std
+
+    # Determine single-label
+    is_single = single_label
+    if is_single and Y_train.ndim > 1:
+        Y_train_cls = Y_train.argmax(dim=1)
+        Y_val_cls = Y_val.argmax(dim=1)
     else:
-        Y_cls = Y
+        Y_train_cls, Y_val_cls = Y_train, Y_val
 
     try:
         from glm_saga.elasticnet import glm_saga, IndexedTensorDataset
@@ -349,36 +403,51 @@ def train_classifier(concept_layer, backbone, loader, num_classes, device, lam, 
         USE_SAGA = False
 
     if USE_SAGA and is_single:
-        ds = IndexedTensorDataset(X, Y_cls)
+        ds = IndexedTensorDataset(X_train, Y_train_cls)
         loader_cls = DataLoader(ds, batch_size=saga_batch, shuffle=True)
-        linear = nn.Linear(X.size(1), num_classes).to(device)
+        linear = nn.Linear(X_train.size(1), num_classes).to(device)
         linear.weight.data.zero_()
         linear.bias.data.zero_()
-        glm_saga(
-            linear,
-            loader_cls,
-            max_lr=0.1,
-            nepochs=saga_iters,
-            alpha=0.99,
-            epsilon=1.0,
-            k=1,
-            val_loader=None,
-            do_zero=False,
-            metadata={'max_reg': {'nongrouped': lam}},
-            n_ex=len(X),
-            n_classes=num_classes,
-            family='multiclass',
-        )
+        # Wrap glm_saga with a progress bar: iterate epochs manually
+        history = []
+        for epoch in tqdm(range(saga_iters), desc="SAGA classifier"):
+            out = glm_saga(
+                linear,
+                loader_cls,
+                max_lr=0.1,
+                nepochs=1,
+                alpha=0.99,
+                epsilon=1.0,
+                k=1,
+                val_loader=None,
+                do_zero=False,
+                metadata={'max_reg': {'nongrouped': lam}},
+                n_ex=len(X_train),
+                n_classes=num_classes,
+                family='multiclass',
+            )
+            history.append(out)
         W = linear.weight.data.cpu()
         b = linear.bias.data.cpu()
+        # Metrics
+        train_logits = (X_train @ W.T) + b
+        val_logits = (X_val @ W.T) + b
+        train_pred = torch.softmax(train_logits, dim=1).numpy()
+        val_pred = torch.softmax(val_logits, dim=1).numpy()
+        train_targets = Y_train_cls.numpy()
+        val_targets = Y_val_cls.numpy()
+        train_acc = (train_pred.argmax(axis=1) == train_targets).mean()
+        val_acc = (val_pred.argmax(axis=1) == val_targets).mean()
+        train_metrics = {"accuracy": float(train_acc)}
+        val_metrics = {"accuracy": float(val_acc)}
     else:
-        linear = nn.Linear(X.size(1), num_classes, bias=True).to(device)
+        linear = nn.Linear(X_train.size(1), num_classes, bias=True).to(device)
         if is_single:
             criterion = nn.CrossEntropyLoss()
         else:
             criterion = nn.BCEWithLogitsLoss()
         opt = torch.optim.Adam(linear.parameters(), lr=1e-3)
-        ds = TensorDataset(X, Y_cls if is_single else Y)
+        ds = TensorDataset(X_train, Y_train_cls if is_single else Y_train)
         dl = DataLoader(ds, batch_size=128, shuffle=True)
         for _ in range(50):
             for xb, yb in dl:
@@ -392,11 +461,35 @@ def train_classifier(concept_layer, backbone, loader, num_classes, device, lam, 
         W = linear.weight.data.cpu()
         b = linear.bias.data.cpu()
 
-    return W, b
+        with torch.no_grad():
+            train_logits = linear(X_train.to(device)).cpu()
+            val_logits = linear(X_val.to(device)).cpu()
+        if is_single:
+            train_pred = torch.softmax(train_logits, dim=1).numpy()
+            val_pred = torch.softmax(val_logits, dim=1).numpy()
+            train_targets = Y_train_cls.numpy()
+            val_targets = Y_val_cls.numpy()
+            train_acc = (train_pred.argmax(axis=1) == train_targets).mean()
+            val_acc = (val_pred.argmax(axis=1) == val_targets).mean()
+            train_metrics = {"accuracy": float(train_acc)}
+            val_metrics = {"accuracy": float(val_acc)}
+        else:
+            train_pred = torch.sigmoid(train_logits).numpy()
+            val_pred = torch.sigmoid(val_logits).numpy()
+            train_targets = Y_train.numpy()
+            val_targets = Y_val.numpy()
+            train_metrics = compute_all_metrics(train_targets, train_pred, labels)
+            val_metrics = compute_all_metrics(val_targets, val_pred, labels)
+
+    # Save normalization stats for inference
+    norm_stats = {"mean": train_mean, "std": train_std}
+    return W, b, train_metrics, val_metrics, norm_stats
 
 
 def main():
+    print("---- Starting SALF-CBM run:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     args = parse_args()
+    print(args)
     set_seed(args.seed)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     os.makedirs(args.output, exist_ok=True)
@@ -434,7 +527,7 @@ def main():
             idx = np.random.RandomState(args.seed).permutation(len(train_ds))[:args.limit_samples]
             train_ds = torch.utils.data.Subset(train_ds, idx)
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=False,
                               num_workers=args.num_workers, pin_memory=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                             num_workers=args.num_workers, pin_memory=True)
@@ -446,31 +539,50 @@ def main():
         clip_enc = MedSigLIP(device)
     cache_tag = f"{Path(args.output).stem}_gh{args.grid_h}_gw{args.grid_w}_r{args.prompt_radius}"
     cache_base = os.path.join(args.activation_dir, cache_tag)
-    P_train = compute_spatial_sims(train_ds, clip_enc, concepts, args.grid_h, args.grid_w,
-                                   args.prompt_radius, cache_base + "_train", device,
-                                   batch_size=args.batch_size, num_workers=args.num_workers,
-                                   force_recompute=args.recompute)
-    P_val = compute_spatial_sims(val_ds, clip_enc, concepts, args.grid_h, args.grid_w,
-                                 args.prompt_radius, cache_base + "_val", device,
-                                 batch_size=args.batch_size, num_workers=args.num_workers,
-                                 force_recompute=args.recompute)
+    P_train = compute_spatial_sims(
+        train_ds, clip_enc, concepts,
+        args.grid_h, args.grid_w, args.prompt_radius,
+        cache_base + "_train", device,
+        data_batch_size=args.batch_size,
+        prompt_batch_size=args.prompt_batch_size,
+        num_workers=args.num_workers,
+        force_recompute=args.recompute
+    )
+    P_val = compute_spatial_sims(
+        val_ds, clip_enc, concepts,
+        args.grid_h, args.grid_w, args.prompt_radius,
+        cache_base + "_val", device,
+        data_batch_size=args.batch_size,
+        prompt_batch_size=args.prompt_batch_size,
+        num_workers=args.num_workers,
+        force_recompute=args.recompute
+    )
 
     # Backbone + concept layer
     backbone = BackboneSpatial(args.backbone, args.backbone_ckpt, device, pretrained=args.pretrained)
     concept_layer = ConceptConv(backbone.feature_dim, len(concepts))
 
     # Train CBL
-    concept_layer = train_cbl(backbone, concept_layer, train_loader, P_train, device,
+    concept_layer = train_cbl(backbone, concept_layer, train_loader, P_train, val_loader, P_val, device,
                               args.epochs, args.lr, args.grid_h, args.grid_w, len(concepts))
 
-    # Train classifier
-    W, b = train_classifier(concept_layer, backbone, train_loader, num_classes, device,
-                            args.lam, args.saga_iters, args.saga_batch_size)
+    # Train classifier + eval
+    W, b, train_metrics, val_metrics, norm_stats = train_classifier(
+        concept_layer, backbone, train_loader, val_loader,
+        num_classes, device, args.lam, args.saga_iters, args.saga_batch_size,
+        labels, single_label
+    )
 
     # Save artifacts
     torch.save(concept_layer.state_dict(), os.path.join(args.output, "concept_layer.pt"))
     torch.save(W, os.path.join(args.output, "W_g.pt"))
     torch.save(b, os.path.join(args.output, "b_g.pt"))
+    torch.save(norm_stats["mean"], os.path.join(args.output, "concept_mean.pt"))
+    torch.save(norm_stats["std"], os.path.join(args.output, "concept_std.pt"))
+    with open(os.path.join(args.output, "train_metrics.json"), "w") as f:
+        json.dump(train_metrics, f, indent=2)
+    with open(os.path.join(args.output, "val_metrics.json"), "w") as f:
+        json.dump(val_metrics, f, indent=2)
     with open(os.path.join(args.output, "concepts.txt"), "w") as f:
         f.write("\n".join(concepts))
     with open(os.path.join(args.output, "config.json"), "w") as f:
